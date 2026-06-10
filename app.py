@@ -3,20 +3,15 @@ Ballistic Lead Calculator
 3-DOF point-mass model · RK4 integration · relative-air-velocity drag
 """
 
-import base64
 import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from PIL import Image
-
-_logo    = Image.open("logo.png")
-_logo_b64 = base64.b64encode(open("logo.png", "rb").read()).decode()
 
 st.set_page_config(
-    page_title="Digitest Ballistic Lead Calculator",
-    page_icon=_logo,
+    page_title="Ballistic Lead Calculator",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -582,20 +577,12 @@ def metric_card(label: str, value: str, unit: str = ""):
 #  HEADER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_hcol_logo, _hcol_title = st.columns([2, 8])
-with _hcol_logo:
-    st.markdown(
-        f'<img src="data:image/png;base64,{_logo_b64}" '
-        f'style="width:200px; margin-top:1.2rem; margin-left:2rem;" />',
-        unsafe_allow_html=True,
-    )
-with _hcol_title:
-    st.markdown("# Digitest Ballistic Lead Calculator")
-    st.markdown(
-        '<div class="subtitle">Target Intercept &amp; Elevation Analysis'
-        ' &nbsp;·&nbsp; 3-DOF Point-Mass · RK4 · Relative-Air-Velocity Drag</div>',
-        unsafe_allow_html=True,
-    )
+st.markdown("# 🎯 Ballistic Lead Calculator")
+st.markdown(
+    '<div class="subtitle">Target Intercept &amp; Elevation Analysis'
+    ' &nbsp;·&nbsp; 3-DOF Point-Mass · RK4 · Relative-Air-Velocity Drag</div>',
+    unsafe_allow_html=True,
+)
 st.divider()
 
 

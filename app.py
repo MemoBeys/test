@@ -8,10 +8,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+from PIL import Image
+
+_logo = Image.open("logo.png")
 
 st.set_page_config(
-    page_title="Ballistic Lead Calculator",
-    page_icon="🎯",
+    page_title="Digitest Ballistic Lead Calculator",
+    page_icon=_logo,
     layout="wide",
     initial_sidebar_state="expanded",
 )

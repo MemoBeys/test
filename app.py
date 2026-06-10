@@ -580,12 +580,16 @@ def metric_card(label: str, value: str, unit: str = ""):
 #  HEADER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-st.markdown("# 🎯 Ballistic Lead Calculator")
-st.markdown(
-    '<div class="subtitle">Target Intercept &amp; Elevation Analysis'
-    ' &nbsp;·&nbsp; 3-DOF Point-Mass · RK4 · Relative-Air-Velocity Drag</div>',
-    unsafe_allow_html=True,
-)
+_hcol_logo, _hcol_title = st.columns([1, 9])
+with _hcol_logo:
+    st.image("logo.png", width=90)
+with _hcol_title:
+    st.markdown("# Digitest Ballistic Lead Calculator")
+    st.markdown(
+        '<div class="subtitle">Target Intercept &amp; Elevation Analysis'
+        ' &nbsp;·&nbsp; 3-DOF Point-Mass · RK4 · Relative-Air-Velocity Drag</div>',
+        unsafe_allow_html=True,
+    )
 st.divider()
 
 

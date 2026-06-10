@@ -1,6 +1,6 @@
 """
 Ballistic Lead Calculator
-3D point-mass model · RK4 integration · relative-air-velocity drag
+3-DOF point-mass model · RK4 integration · relative-air-velocity drag
 """
 
 import streamlit as st
@@ -80,6 +80,10 @@ G         = 9.81    # m/s²    gravitational acceleration
 R_AIR     = 287.05  # J/kg·K  specific gas constant for dry air
 GAMMA_AIR = 1.4     # —       adiabatic index (cp/cv) for air
 
+# Cd(Mach) reference table — np.interp extrapolates flat outside the range
+MACH_TABLE = np.array([0.0, 0.5, 0.8, 0.9, 1.0, 1.1, 1.2, 1.5, 2.0, 3.0, 4.0])
+CD_TABLE   = np.array([0.20, 0.22, 0.25, 0.32, 0.40, 0.38, 0.35, 0.31, 0.28, 0.25, 0.23])
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ATMOSPHERE
@@ -88,14 +92,10 @@ GAMMA_AIR = 1.4     # —       adiabatic index (cp/cv) for air
 def atmosphere(temp_c: float, pressure_hpa: float):
     """
     ISA-style local atmosphere.
-
-    Returns
-    -------
-    rho : float   air density  [kg/m³]
-    c   : float   speed of sound [m/s]
+    Returns (rho [kg/m³], speed_of_sound [m/s]).
     """
-    T   = temp_c + 273.15       # K
-    P   = pressure_hpa * 100.0  # Pa
+    T   = temp_c + 273.15
+    P   = pressure_hpa * 100.0
     rho = P / (R_AIR * T)
     c   = np.sqrt(GAMMA_AIR * R_AIR * T)
     return rho, c
@@ -105,19 +105,14 @@ def atmosphere(temp_c: float, pressure_hpa: float):
 #  DRAG COEFFICIENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def get_cd(mach: float, cd_base: float) -> float:
+def get_cd(mach: float, cd_base: float, use_mach_table: bool = False) -> float:
     """
-    Mach-dependent drag coefficient.
-
-    Currently returns the constant cd_base.
-    To add a Cd(Mach) table, replace this function body with an interpolation
-    over a user-supplied (mach_array, cd_array) pair.
-
-    Parameters
-    ----------
-    mach    : local Mach number of the bullet relative to air
-    cd_base : baseline Cd from UI input
+    Drag coefficient lookup.
+    use_mach_table=False  →  return cd_base (constant, user-supplied)
+    use_mach_table=True   →  np.interp from MACH_TABLE / CD_TABLE
     """
+    if use_mach_table:
+        return float(np.interp(mach, MACH_TABLE, CD_TABLE))
     return cd_base
 
 
@@ -127,29 +122,25 @@ def get_cd(mach: float, cd_base: float) -> float:
 
 def _derivs(state: np.ndarray, wind_vec: np.ndarray,
             rho: float, c: float,
-            cd_base: float, area: float, mass: float) -> np.ndarray:
+            cd_base: float, area: float, mass: float,
+            use_mach_table: bool = False) -> np.ndarray:
     """
-    Time derivatives of the 6-DOF point-mass state vector.
-
-    State layout : [x, y, z, vx, vy, vz]
+    Time derivatives of the 3-DOF point-mass state vector [x, y, z, vx, vy, vz].
 
     Coordinate system:
-        x  = downrange  (forward, in direction of fire)
-        y  = vertical   (up positive)
-        z  = lateral    (right positive when viewed from behind the gun)
+        x = downrange (forward)   y = vertical (up+)   z = lateral (right+)
 
-    Physics:
-        v_rel  = bullet velocity − wind vector   (bullet velocity relative to air)
-        a_drag = −(k · |v_rel|) · v_rel          where k = ½ρCdA/m
-        a_grav = [0, −g, 0]
-        a      = a_drag + a_grav
+    Drag is computed on relative-air velocity:
+        v_rel  = v_bullet − wind_vector
+        a_drag = −k·|v_rel|·v_rel    where k = ½ρCdA/m
+        a      = a_drag + [0, −g, 0]
     """
     vel   = state[3:6]
     v_rel = vel - wind_vec
     spd   = np.linalg.norm(v_rel)
 
     mach = spd / c if c > 0.0 else 0.0
-    cd   = get_cd(mach, cd_base)
+    cd   = get_cd(mach, cd_base, use_mach_table)
     k    = 0.5 * rho * cd * area / mass
 
     a_drag = -k * spd * v_rel
@@ -173,45 +164,43 @@ def _rk4_step(state: np.ndarray, dt: float, **kw) -> np.ndarray:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def simulate_3d(
-        distance_m:     float,
-        tilt_deg:       float,
-        temp_c:         float,
-        pressure_hpa:   float,
-        wind_x:         float,
-        wind_z:         float,
-        bullet_mass_g:  float,
-        bullet_diam_mm: float,
-        muzzle_vel_ms:  float,
-        cd_base:        float,
-        dt:             float = 0.001,
+        distance_m:      float,
+        tilt_deg:        float,
+        temp_c:          float,
+        pressure_hpa:    float,
+        wind_x:          float,
+        wind_z:          float,
+        bullet_mass_g:   float,
+        bullet_diam_mm:  float,
+        muzzle_vel_ms:   float,
+        cd_base:         float,
+        dt:              float = 0.001,
+        use_mach_table:  bool  = False,
 ) -> dict:
     """
-    3D point-mass ballistic trajectory with RK4 integration.
+    3-DOF point-mass ballistic trajectory with RK4 integration.
 
     Wind convention
     ---------------
-    wind_x > 0  tailwind  (same direction as bullet → reduces effective drag)
-    wind_x < 0  headwind  (opposing bullet → increases effective drag)
-    wind_z > 0  rightward crosswind  (pushes bullet in +z direction)
-    wind_z < 0  leftward  crosswind
+    wind_x > 0  tailwind   wind_x < 0  headwind
+    wind_z > 0  +z crosswind  (rightward drift)
 
     Impact detection
     ----------------
-    When x crosses distance_m, the exact impact point is found by linear
-    interpolation between the last two RK4 states.
+    Linear interpolation between the last two RK4 states when x ≥ distance_m.
 
-    Returns
-    -------
-    dict with keys: tof, impact_y, impact_z, impact_velocity, impact_energy
+    Returns dict: tof, impact_y, impact_z, impact_velocity, impact_energy,
+                  impact_mach, avg_cd
     """
     rho, c = atmosphere(temp_c, pressure_hpa)
 
     mass = bullet_mass_g / 1000.0
-    area = np.pi * (bullet_diam_mm / 2000.0) ** 2   # (d/2 in m)² · π
+    area = np.pi * (bullet_diam_mm / 2000.0) ** 2
 
     wind_vec = np.array([wind_x, 0.0, wind_z])
     kw = dict(wind_vec=wind_vec, rho=rho, c=c,
-              cd_base=cd_base, area=area, mass=mass)
+              cd_base=cd_base, area=area, mass=mass,
+              use_mach_table=use_mach_table)
 
     v0x = muzzle_vel_ms * np.cos(np.radians(tilt_deg))
     v0y = muzzle_vel_ms * np.sin(np.radians(tilt_deg))
@@ -221,7 +210,17 @@ def simulate_3d(
     prev_state = state.copy()
     prev_t     = 0.0
 
+    sum_cd    = 0.0
+    step_count = 0
+
     for _ in range(500_000):
+        # sample Cd at start of each step for average tracking
+        v_r   = state[3:6] - wind_vec
+        spd_r = np.linalg.norm(v_r)
+        mach_r = spd_r / c if c > 0.0 else 0.0
+        sum_cd    += get_cd(mach_r, cd_base, use_mach_table)
+        step_count += 1
+
         prev_state = state.copy()
         prev_t     = t
 
@@ -229,26 +228,24 @@ def simulate_3d(
         t    += dt
 
         if state[0] >= distance_m:
-            # Linear interpolation to find precise impact point
             dx   = state[0] - prev_state[0]
             frac = (distance_m - prev_state[0]) / dx if dx > 1e-12 else 1.0
             imp  = prev_state + frac * (state - prev_state)
             tof  = prev_t + frac * dt
-
-            v_imp = imp[3:6]
-            spd   = float(np.linalg.norm(v_imp))
+            spd  = float(np.linalg.norm(imp[3:6]))
             return {
                 "tof":             tof,
                 "impact_y":        float(imp[1]),
                 "impact_z":        float(imp[2]),
                 "impact_velocity": spd,
                 "impact_energy":   0.5 * mass * spd**2,
+                "impact_mach":     spd / c if c > 0.0 else 0.0,
+                "avg_cd":          sum_cd / step_count if step_count else cd_base,
             }
 
         if state[1] < -(distance_m + 200.0):
             break
 
-    # Fallback: bullet did not reach target range
     spd = float(np.linalg.norm(state[3:6]))
     return {
         "tof":             t,
@@ -256,52 +253,108 @@ def simulate_3d(
         "impact_z":        float(state[2]),
         "impact_velocity": spd,
         "impact_energy":   0.5 * mass * spd**2,
+        "impact_mach":     spd / c if c > 0.0 else 0.0,
+        "avg_cd":          sum_cd / step_count if step_count else cd_base,
     }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SCENARIO  (two simulations: full conditions + horizontal-no-wind reference)
+#  REQUIRED ELEVATION  (bisection root-solve)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def find_required_elevation(
+        distance_m:     float,
+        temp_c:         float,
+        pressure_hpa:   float,
+        wind_x:         float,
+        wind_z:         float,
+        bullet_mass_g:  float,
+        bullet_diam_mm: float,
+        muzzle_vel_ms:  float,
+        cd_base:        float,
+        tol:            float = 1e-3,
+        max_iter:       int   = 60,
+        use_mach_table: bool  = False,
+) -> float:
+    """
+    Bisection search for the gun elevation angle at which impact_y = 0.
+
+    Bracket: tilt_lo = 0° (impact_y < 0), tilt_hi grown from 1° by doubling.
+    Converges when |impact_y| < tol metres.
+    Returns 0.0 if target is unreachable.
+    """
+    def residual(tilt: float) -> float:
+        return simulate_3d(
+            distance_m, tilt, temp_c, pressure_hpa,
+            wind_x, wind_z,
+            bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base,
+            use_mach_table=use_mach_table,
+        )["impact_y"]
+
+    tilt_lo, f_lo = 0.0, residual(0.0)
+    calls = 1
+
+    tilt_hi = 1.0
+    f_hi    = residual(tilt_hi)
+    calls  += 1
+
+    while f_hi <= 0.0 and tilt_hi < 85.0 and calls < max_iter:
+        tilt_hi *= 2.0
+        f_hi     = residual(tilt_hi)
+        calls   += 1
+
+    if f_hi <= 0.0:
+        return 0.0
+
+    while calls < max_iter:
+        tilt_mid = 0.5 * (tilt_lo + tilt_hi)
+        f_mid    = residual(tilt_mid)
+        calls   += 1
+
+        if abs(f_mid) < tol:
+            return tilt_mid
+
+        if f_lo * f_mid < 0.0:
+            tilt_hi, f_hi = tilt_mid, f_mid
+        else:
+            tilt_lo, f_lo = tilt_mid, f_mid
+
+    return 0.5 * (tilt_lo + tilt_hi)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SCENARIO
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def compute_scenario(
         distance_m, tilt_deg, temp_c, pressure_hpa,
         wind_x, wind_z,
         bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base,
+        use_mach_table: bool = False,
 ) -> dict:
     """
-    Derive all ballistic outputs from two trajectory runs.
-
-    Sim 1 — given tilt + wind      → TOF, impact_y, impact_z, v_impact
-    Sim 2 — tilt=0°, no wind       → required-elevation reference drop
+    Run one trajectory + bisection elevation solve; return all derived outputs.
     """
     main = simulate_3d(distance_m, tilt_deg, temp_c, pressure_hpa,
                        wind_x, wind_z,
-                       bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base)
-
-    ref  = simulate_3d(distance_m, 0.0, temp_c, pressure_hpa,
-                       0.0, 0.0,
-                       bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base)
+                       bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base,
+                       use_mach_table=use_mach_table)
 
     tof   = main["tof"]
     imp_y = main["impact_y"]
-    imp_z = main["impact_z"]        # ← this IS the wind drift (z-axis lateral)
+    imp_z = main["impact_z"]
     v_imp = main["impact_velocity"]
     e_imp = main["impact_energy"]
 
-    # Drop: vertical distance below the line-of-departure at target range
-    #   line-of-departure height at range d = d · tan(tilt)
-    drop = distance_m * np.tan(np.radians(tilt_deg)) - imp_y
-
-    # Wind Drift: lateral (z-axis) displacement at impact
+    drop       = distance_m * np.tan(np.radians(tilt_deg)) - imp_y
     wind_drift = imp_z
 
-    # Required Elevation: angle to compensate pure-gravity drop (horizontal, no wind)
-    drop_horiz    = max(-ref["impact_y"], 0.0)
-    required_elev = np.degrees(np.arctan2(drop_horiz, distance_m))
-
-    # Vertical error in degrees and metres
-    vert_error_deg = tilt_deg - required_elev
-    vert_error_m   = imp_y       # bullet's actual y at target (+ = above, − = below)
+    required_elev = find_required_elevation(
+        distance_m, temp_c, pressure_hpa,
+        wind_x, wind_z,
+        bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base,
+        use_mach_table=use_mach_table,
+    )
 
     return dict(
         tof=tof,
@@ -310,28 +363,30 @@ def compute_scenario(
         drop=drop,
         wind_drift=wind_drift,
         required_elev=required_elev,
-        vert_error_deg=vert_error_deg,
-        vert_error_m=vert_error_m,
+        vert_error_deg=tilt_deg - required_elev,
+        vert_error_m=imp_y,
         impact_velocity=v_imp,
         impact_energy=e_imp,
+        impact_mach=main["impact_mach"],
+        avg_cd=main["avg_cd"],
     )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  TARGET-SPEED SWEEP  1–500 km/h
+#  SWEEP — Tek Tilt (1–500 km/h hedef hızı)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def sweep(distance_m, tilt_deg, temp_c, pressure_hpa,
           wind_x, wind_z,
-          bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base) -> pd.DataFrame:
+          bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base,
+          use_mach_table: bool = False) -> pd.DataFrame:
     """
-    Trajectory is computed ONCE.  Only Lead = v_target × TOF varies per row,
-    because the target's speed does not affect the bullet's trajectory.
+    Trajectory computed ONCE.  Only Lead varies with target speed.
     """
     s = compute_scenario(distance_m, tilt_deg, temp_c, pressure_hpa,
                          wind_x, wind_z,
-                         bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base)
-
+                         bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base,
+                         use_mach_table=use_mach_table)
     rows = []
     for spd in range(1, 501):
         lead = (spd / 3.6) * s["tof"]
@@ -353,10 +408,73 @@ def sweep(distance_m, tilt_deg, temp_c, pressure_hpa,
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  SWEEP — Tilt Aralığı
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def sweep_tilt_range(
+        distance_m,
+        tilt_start, tilt_end, tilt_step,
+        temp_c, pressure_hpa, wind_x, wind_z,
+        bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base,
+        use_mach_table: bool = False,
+) -> pd.DataFrame:
+    """
+    For each tilt in [tilt_start … tilt_end] at tilt_step intervals:
+      - compute_scenario() called ONCE per tilt (trajectory is speed-independent)
+      - Lead = v_target × TOF computed in the inner loop
+
+    Float-safe tilt generation (no np.arange):
+        count       = int(round((tilt_end - tilt_start) / tilt_step)) + 1
+        tilt_values = [tilt_start + i * tilt_step  for i in range(count)]
+    """
+    count       = int(round((tilt_end - tilt_start) / tilt_step)) + 1
+    tilt_values = [tilt_start + i * tilt_step for i in range(count)]
+
+    rows = []
+    for tilt in tilt_values:
+        s = compute_scenario(
+            distance_m, tilt, temp_c, pressure_hpa,
+            wind_x, wind_z,
+            bullet_mass_g, bullet_diam_mm, muzzle_vel_ms, cd_base,
+            use_mach_table=use_mach_table,
+        )
+        # Pre-round constants so the inner loop only rounds Lead
+        tof_r   = round(s["tof"],            4)
+        drop_r  = round(s["drop"],           3)
+        drift_r = round(s["wind_drift"],     3)
+        impy_r  = round(s["impact_y"],       3)
+        ve_m_r  = round(s["vert_error_m"],   3)
+        req_r   = round(s["required_elev"],  4)
+        tilt_r  = round(tilt,               4)
+        dha_r   = round(s["vert_error_deg"], 4)
+        vmp_r   = round(s["impact_velocity"],2)
+        ene_r   = round(s["impact_energy"],  1)
+
+        for spd in range(1, 501):
+            lead = (spd / 3.6) * s["tof"]
+            rows.append({
+                "Hedef Hızı (km/h)":      spd,
+                "Tilt (°)":               tilt_r,
+                "TOF (s)":                tof_r,
+                "Lead (m)":               round(lead, 3),
+                "Drop (m)":               drop_r,
+                "Wind Drift (m)":         drift_r,
+                "Impact Y (m)":           impy_r,
+                "Vertical Error (m)":     ve_m_r,
+                "Required Elevation (°)": req_r,
+                "Dikey Hata (°)":         dha_r,
+                "Impact Velocity (m/s)":  vmp_r,
+                "Impact Energy (J)":      ene_r,
+            })
+    return pd.DataFrame(rows)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  UI HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def make_figure(df, x_col, y_col, color, ylabel):
+    """Return a dark-themed matplotlib figure.  Caller must plt.close(fig)."""
     fig, ax = plt.subplots(figsize=(5.5, 3.0))
     fig.patch.set_facecolor("#161b22")
     ax.set_facecolor("#0d1117")
@@ -370,6 +488,12 @@ def make_figure(df, x_col, y_col, color, ylabel):
     ax.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.2f"))
     plt.tight_layout(pad=0.8)
     return fig
+
+
+def _show_fig(fig):
+    """Render figure and immediately close it to prevent memory leaks."""
+    st.pyplot(fig)
+    plt.close(fig)
 
 
 def metric_card(label: str, value: str, unit: str = ""):
@@ -389,7 +513,7 @@ def metric_card(label: str, value: str, unit: str = ""):
 st.markdown("# 🎯 Ballistic Lead Calculator")
 st.markdown(
     '<div class="subtitle">Target Intercept &amp; Elevation Analysis'
-    ' &nbsp;·&nbsp; 3D Point-Mass · RK4 · Relative-Air-Velocity Drag</div>',
+    ' &nbsp;·&nbsp; 3-DOF Point-Mass · RK4 · Relative-Air-Velocity Drag</div>',
     unsafe_allow_html=True,
 )
 st.divider()
@@ -403,25 +527,44 @@ with st.sidebar:
 
     # ── Ammo ──────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Mühimmat</div>', unsafe_allow_html=True)
-    bullet_name = st.text_input("Mermi Adı",                value="Default 25mm")
-    bullet_mass = st.number_input("Ağırlık (g)",            value=185.0,   min_value=1.0,  step=0.1)
-    bullet_diam = st.number_input("Çap (mm)",               value=25.0,    min_value=1.0,  step=0.1)
-    muzzle_vel  = st.number_input("Namlu Hızı (m/s)",       value=1000.0,  min_value=1.0,  step=1.0)
-    cd_val      = st.number_input("Cd (sabit)", value=0.29, min_value=0.01, step=0.01, format="%.3f",
-                                  help="get_cd(mach) fonksiyonu ile Mach'a bağımlı tablo eklenebilir.")
+    bullet_name = st.text_input("Mermi Adı",          value="Default 25mm")
+    bullet_mass = st.number_input("Ağırlık (g)",       value=185.0, min_value=1.0,  step=0.1)
+    bullet_diam = st.number_input("Çap (mm)",          value=25.0,  min_value=1.0,  step=0.1)
+    muzzle_vel  = st.number_input("Namlu Hızı (m/s)", value=1000.0, min_value=1.0,  step=1.0)
+    cd_val      = st.number_input(
+        "Cd (sabit)", value=0.29, min_value=0.01, step=0.01, format="%.3f",
+        help="Mach Dependent Cd kapalıyken bu değer kullanılır.",
+    )
+    use_mach_table = st.checkbox("Mach Dependent Cd", value=False,
+                                 help="Açıksa MACH_TABLE/CD_TABLE ile np.interp. Kapalıysa sabit Cd.")
 
-    # ── Conditions ────────────────────────────────────────────────────────────
+    # ── Analiz Modu ───────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Analiz Modu</div>', unsafe_allow_html=True)
+    analysis_mode = st.radio(
+        "", ["Tek Tilt", "Tilt Aralığı"],
+        index=0, key="analysis_mode",
+        label_visibility="collapsed",
+    )
+
+    # ── Koşullar ──────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Koşullar</div>', unsafe_allow_html=True)
-    distance    = st.number_input("Mesafe (m)",           value=1000.0,   min_value=10.0,  step=10.0)
-    tilt_angle  = st.number_input("Tilt / Elevation (°)", value=2.0,
-                                  min_value=-45.0, max_value=45.0, step=0.1)
-    temperature = st.number_input("Sıcaklık (°C)",        value=15.0,
-                                  min_value=-60.0, max_value=60.0, step=0.5)
-    pressure    = st.number_input("Basınç (hPa)",         value=1013.25,  min_value=800.0, step=0.5)
+    distance    = st.number_input("Mesafe (m)",   value=1000.0, min_value=10.0, step=10.0)
 
-    # ── Wind ──────────────────────────────────────────────────────────────────
+    if analysis_mode == "Tek Tilt":
+        tilt_angle = st.number_input(
+            "Tilt / Elevation (°)", value=2.0,
+            min_value=-45.0, max_value=45.0, step=0.1,
+        )
+    else:
+        tilt_start = st.number_input("Başlangıç Tilt (°)", value=1.0,  min_value=-45.0, max_value=45.0, step=0.1)
+        tilt_end   = st.number_input("Bitiş Tilt (°)",     value=15.0, min_value=-45.0, max_value=45.0, step=0.1)
+        tilt_step  = st.number_input("Tilt Adımı (°)",     value=0.5,  min_value=0.01,  max_value=10.0, step=0.1, format="%.2f")
+
+    temperature = st.number_input("Sıcaklık (°C)", value=15.0,  min_value=-60.0, max_value=60.0, step=0.5)
+    pressure    = st.number_input("Basınç (hPa)",  value=1013.25, min_value=800.0, step=0.5)
+
+    # ── Rüzgar ────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Rüzgar</div>', unsafe_allow_html=True)
-
     st.markdown(
         '<div class="info-box">'
         '<b>Head/Tail Wind</b>: x ekseninde, mermi hareket yönünde.<br>'
@@ -441,54 +584,141 @@ with st.sidebar:
     cw_spd = st.number_input("Crosswind (m/s)", value=0.0, min_value=0.0, step=0.1)
     cw_dir = st.radio(
         "Crosswind Yönü",
-        ["Sağdan (+z)", "Soldan (−z)"],
+        ["+Z yönünde (sağ sapma)", "−Z yönünde (sol sapma)"],
         index=0, key="cw_dir",
     )
-    wind_z = +cw_spd if cw_dir.startswith("Sağdan") else -cw_spd
+    wind_z = +cw_spd if cw_dir.startswith("+Z") else -cw_spd
 
     st.markdown("")
     calc_btn = st.button("⚡ Hesapla")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  MAIN
+#  SESSION STATE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+for _k in ("df", "mode", "mach_info"):
+    if _k not in st.session_state:
+        st.session_state[_k] = None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HESAPLAMA
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if calc_btn:
-    with st.spinner("Simülasyon çalışıyor (3D · RK4)…"):
-        df = sweep(distance, tilt_angle, temperature, pressure,
-                   wind_x, wind_z,
-                   bullet_mass, bullet_diam, muzzle_vel, cd_val)
 
-    s = df.iloc[0]   # all trajectory cols are constant; lead from row 100
+    if analysis_mode == "Tek Tilt":
+        with st.spinner("Simülasyon çalışıyor (3D · RK4)…"):
+            df_result = sweep(
+                distance, tilt_angle, temperature, pressure,
+                wind_x, wind_z,
+                bullet_mass, bullet_diam, muzzle_vel, cd_val,
+                use_mach_table=use_mach_table,
+            )
+            _, c_snd = atmosphere(temperature, pressure)
+            initial_mach = muzzle_vel / c_snd
+            # One extra simulate_3d call for impact_mach and avg_cd
+            _sim = simulate_3d(
+                distance, tilt_angle, temperature, pressure,
+                wind_x, wind_z,
+                bullet_mass, bullet_diam, muzzle_vel, cd_val,
+                use_mach_table=use_mach_table,
+            )
+        st.session_state["df"]        = df_result
+        st.session_state["mode"]      = "Tek Tilt"
+        st.session_state["mach_info"] = {
+            "initial_mach": round(initial_mach,       3),
+            "impact_mach":  round(_sim["impact_mach"], 3),
+            "avg_cd":       round(_sim["avg_cd"],      4),
+        }
+
+    else:  # Tilt Aralığı
+        valid = True
+        if tilt_end < tilt_start:
+            st.error("⚠ Bitiş Tilt, Başlangıç Tilt'ten küçük olamaz.")
+            valid = False
+        if tilt_step <= 0:
+            st.error("⚠ Tilt Adımı sıfırdan büyük olmalıdır.")
+            valid = False
+
+        if valid:
+            n_tilts = int(round((tilt_end - tilt_start) / tilt_step)) + 1
+            with st.spinner(f"Simülasyon çalışıyor ({n_tilts} tilt · 3D · RK4)…"):
+                df_result = sweep_tilt_range(
+                    distance, tilt_start, tilt_end, tilt_step,
+                    temperature, pressure, wind_x, wind_z,
+                    bullet_mass, bullet_diam, muzzle_vel, cd_val,
+                    use_mach_table=use_mach_table,
+                )
+            st.session_state["df"]        = df_result
+            st.session_state["mode"]      = "Tilt Aralığı"
+            st.session_state["mach_info"] = None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SONUÇLAR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if st.session_state["df"] is None:
+    st.info("Sol panelden parametreleri girin ve **⚡ Hesapla** butonuna basın.")
+    st.stop()
+
+df   = st.session_state["df"]
+mode = st.session_state["mode"]
+
+# ── TABLE FORMAT ──────────────────────────────────────────────────────────────
+BASE_FMT = {
+    "TOF (s)":                "{:.4f}",
+    "Lead (m)":               "{:.3f}",
+    "Drop (m)":               "{:.3f}",
+    "Wind Drift (m)":         "{:.3f}",
+    "Impact Y (m)":           "{:.3f}",
+    "Vertical Error (m)":     "{:.3f}",
+    "Required Elevation (°)": "{:.4f}",
+    "Dikey Hata (°)":         "{:.4f}",
+    "Impact Velocity (m/s)":  "{:.2f}",
+    "Impact Energy (J)":      "{:.1f}",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  TEK TILT MODE
+# ─────────────────────────────────────────────────────────────────────────────
+
+if mode == "Tek Tilt":
+
+    s        = df.iloc[0]
     lead_100 = float(df.loc[df["Hedef Hızı (km/h)"] == 100, "Lead (m)"].iloc[0])
+    mi       = st.session_state.get("mach_info") or {}
 
-    # ── METRIC CARDS ────────────────────────────────────────────────────────
+    # Metric cards
     st.markdown('<div class="section-header">Senaryo Sonuçları</div>',
                 unsafe_allow_html=True)
-
     r1a, r1b, r1c = st.columns(3)
     r2a, r2b, r2c = st.columns(3)
-    r3a, r3b, _   = st.columns(3)
+    r3a, r3b, r3c = st.columns(3)
+    r4a, r4b, _   = st.columns(3)
 
-    with r1a: metric_card("TOF",                   f"{s['TOF (s)']:.4f}",                     "s")
-    with r1b: metric_card("Lead @ 100 km/h",        f"{lead_100:.3f}",                          "m")
-    with r1c: metric_card("Drop",                   f"{s['Drop (m)']:.3f}",                     "m")
-    with r2a: metric_card("Wind Drift (z-axis)",    f"{s['Wind Drift (m)']:.3f}",               "m")
-    with r2b: metric_card("Required Elevation",     f"{s['Required Elevation (°)']:.4f}",       "°")
-    with r2c: metric_card("Vertical Error",         f"{s['Vertical Error (m)']:.3f}",           "m")
-    with r3a: metric_card("Impact Velocity",        f"{s['Impact Velocity (m/s)']:.2f}",        "m/s")
-    with r3b: metric_card("Impact Energy",          f"{s['Impact Energy (J)']:.1f}",            "J")
+    with r1a: metric_card("TOF",                  f"{s['TOF (s)']:.4f}",                     "s")
+    with r1b: metric_card("Lead @ 100 km/h",       f"{lead_100:.3f}",                          "m")
+    with r1c: metric_card("Drop",                  f"{s['Drop (m)']:.3f}",                     "m")
+    with r2a: metric_card("Wind Drift (z-axis)",   f"{s['Wind Drift (m)']:.3f}",               "m")
+    with r2b: metric_card("Required Elevation",    f"{s['Required Elevation (°)']:.4f}",       "°")
+    with r2c: metric_card("Vertical Error",        f"{s['Vertical Error (m)']:.3f}",           "m")
+    with r3a: metric_card("Initial Mach",          f"{mi.get('initial_mach', '—')}",           "")
+    with r3b: metric_card("Impact Mach",           f"{mi.get('impact_mach', '—')}",            "")
+    with r3c: metric_card("Ortalama Cd",           f"{mi.get('avg_cd', '—')}",                 "")
+    with r4a: metric_card("Impact Velocity",       f"{s['Impact Velocity (m/s)']:.2f}",        "m/s")
+    with r4b: metric_card("Impact Energy",         f"{s['Impact Energy (J)']:.1f}",            "J")
 
     st.divider()
 
-    # ── CHARTS ──────────────────────────────────────────────────────────────
-    st.markdown('<div class="section-header">Grafikler</div>',
-                unsafe_allow_html=True)
+    # Charts
+    st.markdown('<div class="section-header">Grafikler</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="info-box">'
-        'TOF, Drop, Wind Drift, Required Elevation ve Impact Velocity hedef hızından bağımsızdır '
-        '(yalnızca mesafe, mühimmat ve ortam koşullarına bağlıdır). '
+        'TOF, Drop, Wind Drift, Required Elevation ve Impact Velocity hedef hızından bağımsızdır. '
         'Sadece <b>Lead = v_hedef × TOF</b> doğrusal olarak değişir.'
         '</div>',
         unsafe_allow_html=True,
@@ -500,62 +730,132 @@ if calc_btn:
 
     with col1:
         st.markdown("**Lead vs Hedef Hızı**")
-        st.pyplot(make_figure(df, "Hedef Hızı (km/h)", "Lead (m)", "#58a6ff", "Lead (m)"))
-
+        _show_fig(make_figure(df, "Hedef Hızı (km/h)", "Lead (m)",               "#58a6ff", "Lead (m)"))
     with col2:
         st.markdown("**Required Elevation vs Hedef Hızı**")
-        st.pyplot(make_figure(df, "Hedef Hızı (km/h)", "Required Elevation (°)", "#f78166", "Elevation (°)"))
-
+        _show_fig(make_figure(df, "Hedef Hızı (km/h)", "Required Elevation (°)", "#f78166", "Elevation (°)"))
     with col3:
         st.markdown("**Drop vs Hedef Hızı**")
-        st.pyplot(make_figure(df, "Hedef Hızı (km/h)", "Drop (m)", "#3fb950", "Drop (m)"))
-
+        _show_fig(make_figure(df, "Hedef Hızı (km/h)", "Drop (m)",               "#3fb950", "Drop (m)"))
     with col4:
         st.markdown("**Wind Drift vs Hedef Hızı**")
-        st.pyplot(make_figure(df, "Hedef Hızı (km/h)", "Wind Drift (m)", "#d2a8ff", "Wind Drift (m)"))
-
+        _show_fig(make_figure(df, "Hedef Hızı (km/h)", "Wind Drift (m)",         "#d2a8ff", "Wind Drift (m)"))
     with col5:
         st.markdown("**Impact Velocity vs Hedef Hızı**")
-        st.pyplot(make_figure(df, "Hedef Hızı (km/h)", "Impact Velocity (m/s)", "#ffa657", "Vel (m/s)"))
+        _show_fig(make_figure(df, "Hedef Hızı (km/h)", "Impact Velocity (m/s)", "#ffa657", "Vel (m/s)"))
 
     st.divider()
 
-    # ── TABLE ───────────────────────────────────────────────────────────────
+    # Table
     st.markdown('<div class="section-header">Sonuç Tablosu (1–500 km/h)</div>',
                 unsafe_allow_html=True)
-
-    search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100")
+    search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100",
+                           key="search_single")
     show_df = df.copy()
     if search.strip():
         try:
-            val     = float(search.strip())
-            show_df = show_df[show_df["Hedef Hızı (km/h)"] == val]
+            show_df = show_df[show_df["Hedef Hızı (km/h)"] == float(search.strip())]
         except ValueError:
             pass
 
-    fmt = {
-        "TOF (s)":                "{:.4f}",
-        "Lead (m)":               "{:.3f}",
-        "Drop (m)":               "{:.3f}",
-        "Wind Drift (m)":         "{:.3f}",
-        "Impact Y (m)":           "{:.3f}",
-        "Vertical Error (m)":     "{:.3f}",
-        "Required Elevation (°)": "{:.4f}",
-        "Girilen Tilt (°)":       "{:.4f}",
-        "Dikey Hata (°)":         "{:.4f}",
-        "Impact Velocity (m/s)":  "{:.2f}",
-        "Impact Energy (J)":      "{:.1f}",
-    }
+    fmt = {**BASE_FMT, "Girilen Tilt (°)": "{:.4f}"}
     st.dataframe(show_df.style.format(fmt), use_container_width=True, height=430)
 
-    # ── CSV ─────────────────────────────────────────────────────────────────
     csv_bytes = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="⬇ sonuc.csv İndir",
-        data=csv_bytes,
-        file_name="sonuc.csv",
-        mime="text/csv",
-    )
+    st.download_button("⬇ sonuc.csv İndir", csv_bytes, "sonuc.csv", "text/csv")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  TILT ARALIĞI MODE
+# ─────────────────────────────────────────────────────────────────────────────
 
 else:
-    st.info("Sol panelden parametreleri girin ve **⚡ Hesapla** butonuna basın.")
+
+    n_tilts  = df["Tilt (°)"].nunique()
+    n_rows   = len(df)
+    tmin     = df["Tilt (°)"].min()
+    tmax     = df["Tilt (°)"].max()
+    tof_min  = df["TOF (s)"].min()
+    tof_max  = df["TOF (s)"].max()
+    drop_min = df["Drop (m)"].min()
+    drop_max = df["Drop (m)"].max()
+
+    st.markdown(
+        f'<div class="section-header">Tilt Aralığı Sonuçları '
+        f'({n_tilts} tilt · {n_rows:,} kombinasyon)</div>',
+        unsafe_allow_html=True,
+    )
+
+    r1a, r1b, r1c = st.columns(3)
+    with r1a: metric_card("Tilt Aralığı",  f"{tmin:.2f} – {tmax:.2f}",         "°")
+    with r1b: metric_card("TOF Aralığı",   f"{tof_min:.4f} – {tof_max:.4f}",   "s")
+    with r1c: metric_card("Drop Aralığı",  f"{drop_min:.3f} – {drop_max:.3f}", "m")
+
+    st.divider()
+
+    # Charts — Tilt Aralığı
+    st.markdown('<div class="section-header">Grafikler</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="info-box">'
+        'Impact Y, Drop ve Impact Velocity hedef hızından bağımsızdır. '
+        'Aşağıdaki grafiklerde seçilen hız, tabloyu filtreler ve '
+        'Lead değerleri o hıza göre hesaplanmıştır.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    viz_speed = st.number_input(
+        "Grafikte hedef hızı (km/h)", value=100,
+        min_value=1, max_value=500, step=1, key="viz_speed",
+    )
+    chart_df = (
+        df[df["Hedef Hızı (km/h)"] == viz_speed]
+        .sort_values("Tilt (°)")
+        .reset_index(drop=True)
+    )
+
+    if chart_df.empty:
+        st.warning(f"{viz_speed} km/h için veri bulunamadı.")
+    else:
+        gc1, gc2 = st.columns(2)
+        gc3, gc4 = st.columns(2)
+
+        with gc1:
+            st.markdown(f"**Tilt vs Impact Y**  *(hedef hızı {viz_speed} km/h)*")
+            _show_fig(make_figure(chart_df, "Tilt (°)", "Impact Y (m)",          "#58a6ff", "Impact Y (m)"))
+        with gc2:
+            st.markdown(f"**Tilt vs Vertical Error**")
+            _show_fig(make_figure(chart_df, "Tilt (°)", "Vertical Error (m)",    "#f78166", "Vert. Error (m)"))
+        with gc3:
+            st.markdown("**Tilt vs Drop**")
+            _show_fig(make_figure(chart_df, "Tilt (°)", "Drop (m)",              "#3fb950", "Drop (m)"))
+        with gc4:
+            st.markdown("**Tilt vs Impact Velocity**")
+            _show_fig(make_figure(chart_df, "Tilt (°)", "Impact Velocity (m/s)", "#ffa657", "Vel (m/s)"))
+
+    st.divider()
+
+    # Table
+    st.markdown('<div class="section-header">Sonuç Tablosu</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="info-box">'
+        'Hız filtresi: belirli bir hedef hızındaki tüm tilt değerlerini gösterir.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100",
+                           key="search_range")
+    show_df = df.copy()
+    if search.strip():
+        try:
+            show_df = show_df[show_df["Hedef Hızı (km/h)"] == float(search.strip())]
+        except ValueError:
+            pass
+
+    fmt = {**BASE_FMT, "Tilt (°)": "{:.4f}"}
+    st.dataframe(show_df.style.format(fmt), use_container_width=True, height=430)
+
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇ sonuc.csv İndir", csv_bytes, "sonuc.csv", "text/csv")

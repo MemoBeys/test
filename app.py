@@ -10,6 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from PIL import Image
+import plotly.graph_objects as go
 
 _logo     = Image.open("logo.png")
 _logo_b64 = base64.b64encode(open("logo.png", "rb").read()).decode()
@@ -310,6 +311,77 @@ def simulate_3d(
         "impact_energy":   0.5 * mass * spd**2,
         "impact_mach":     spd / c if c > 0.0 else 0.0,
         "avg_cd":          sum_cd / step_count if step_count else cd_base,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TRAJECTORY POINTS — for 3D animation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def simulate_trajectory_points(
+        distance_m:     float,
+        tilt_deg:       float,
+        temp_c:         float,
+        pressure_hpa:   float,
+        wind_x:         float,
+        wind_z:         float,
+        bullet_mass_g:  float,
+        bullet_diam_mm: float,
+        muzzle_vel_ms:  float,
+        cd_base:        float,
+        dt:             float = 0.001,
+        use_mach_table: bool  = False,
+) -> dict:
+    """
+    Same RK4 physics as simulate_3d but collects every step.
+    Returns {"t", "x", "y", "z", "tof", "impact_y", "impact_z"}.
+    """
+    rho, c = atmosphere(temp_c, pressure_hpa)
+    mass   = bullet_mass_g / 1000.0
+    area   = np.pi * (bullet_diam_mm / 2000.0) ** 2
+    wind_vec = np.array([wind_x, 0.0, wind_z])
+    kw = dict(wind_vec=wind_vec, rho=rho, c=c,
+              cd_base=cd_base, area=area, mass=mass,
+              use_mach_table=use_mach_table)
+
+    v0x   = muzzle_vel_ms * np.cos(np.radians(tilt_deg))
+    v0y   = muzzle_vel_ms * np.sin(np.radians(tilt_deg))
+    state = np.array([0.0, 0.0, 0.0, v0x, v0y, 0.0])
+
+    t_list = [0.0]; x_list = [0.0]; y_list = [0.0]; z_list = [0.0]
+    t = 0.0
+
+    for _ in range(500_000):
+        prev_state = state.copy()
+        prev_t     = t
+        state = _rk4_step(state, dt, **kw)
+        t    += dt
+
+        if state[0] >= distance_m:
+            dx   = state[0] - prev_state[0]
+            frac = (distance_m - prev_state[0]) / dx if dx > 1e-12 else 1.0
+            imp  = prev_state + frac * (state - prev_state)
+            tof  = prev_t + frac * dt
+            t_list.append(tof)
+            x_list.append(float(imp[0]))
+            y_list.append(float(imp[1]))
+            z_list.append(float(imp[2]))
+            return {
+                "t": t_list, "x": x_list, "y": y_list, "z": z_list,
+                "tof": tof, "impact_y": float(imp[1]), "impact_z": float(imp[2]),
+            }
+
+        t_list.append(t)
+        x_list.append(float(state[0]))
+        y_list.append(float(state[1]))
+        z_list.append(float(state[2]))
+
+        if state[1] < -(distance_m + 200.0):
+            break
+
+    return {
+        "t": t_list, "x": x_list, "y": y_list, "z": z_list,
+        "tof": t, "impact_y": float(state[1]), "impact_z": float(state[2]),
     }
 
 
@@ -651,6 +723,163 @@ def metric_card(label: str, value: str, unit: str = ""):
     )
 
 
+def make_3d_animation(
+        traj, tof, impact_y, impact_z, lead_m,
+        distance_m, target_speed_ms, wind_x, wind_z,
+        required_elev, drop, wind_drift,
+        ammo_name, speed_kmh, tilt_deg,
+) -> go.Figure:
+    """
+    Animated Plotly 3D figure:
+    - Axes: X = downrange, Y = lateral (Z in physics), Z = vertical (Y in physics)
+    - Bullet path, target crossing path, lead point, impact point, ~80 frames.
+    """
+    t_arr = np.array(traj["t"])
+    x_arr = np.array(traj["x"])
+    y_arr = np.array(traj["y"])   # vertical in physics
+    z_arr = np.array(traj["z"])   # lateral in physics
+    n = len(t_arr)
+
+    # Target crosses perpendicular: x fixed at distance_m, lateral = speed*t, vertical = 0
+    tgt_z_impact = target_speed_ms * tof
+
+    step = max(1, n // 80)
+    frame_idx = list(range(0, n, step))
+    if frame_idx[-1] != n - 1:
+        frame_idx.append(n - 1)
+
+    ghost_bullet = go.Scatter3d(
+        x=x_arr, y=z_arr, z=y_arr, mode="lines",
+        line=dict(color="#58a6ff", width=2, dash="dash"), opacity=0.3,
+        name="Mermi Yolu",
+    )
+    ghost_target = go.Scatter3d(
+        x=np.full(n, distance_m), y=target_speed_ms * t_arr, z=np.zeros(n),
+        mode="lines",
+        line=dict(color="#f78166", width=2, dash="dash"), opacity=0.3,
+        name="Hedef Yolu",
+    )
+    lead_pt = go.Scatter3d(
+        x=[distance_m], y=[tgt_z_impact], z=[0.0], mode="markers",
+        marker=dict(symbol="diamond", color="#e3b341", size=9),
+        name="Lead Noktası",
+    )
+    impact_pt = go.Scatter3d(
+        x=[distance_m], y=[impact_z], z=[impact_y], mode="markers",
+        marker=dict(symbol="x", color="#ff7b72", size=9),
+        name="İmpact Noktası",
+    )
+
+    # Animated traces (indices 4 & 5 — matched in frames)
+    anim_bullet = go.Scatter3d(
+        x=[x_arr[0]], y=[z_arr[0]], z=[y_arr[0]], mode="markers+lines",
+        marker=dict(color="#58a6ff", size=7),
+        line=dict(color="#58a6ff", width=3), name="Mermi",
+    )
+    anim_target = go.Scatter3d(
+        x=[distance_m], y=[0.0], z=[0.0], mode="markers+lines",
+        marker=dict(color="#f78166", size=7),
+        line=dict(color="#f78166", width=3), name="Hedef",
+    )
+
+    extra = []
+    if abs(wind_x) > 0.01 or abs(wind_z) > 0.01:
+        wmag = np.sqrt(wind_x**2 + wind_z**2)
+        wlen = min(distance_m * 0.15, 60.0)
+        mx   = distance_m / 2
+        extra.append(go.Scatter3d(
+            x=[mx, mx + wind_x / wmag * wlen],
+            y=[0.0, wind_z / wmag * wlen],
+            z=[0.0, 0.0],
+            mode="lines+text",
+            line=dict(color="#79c0ff", width=4),
+            text=["", f"Rüzgar {wmag:.1f} m/s"],
+            textfont=dict(color="#79c0ff", size=10),
+            name="Rüzgar",
+        ))
+
+    frames = []
+    for fi in frame_idx:
+        tb = max(0, fi - 20)
+        frames.append(go.Frame(
+            data=[
+                go.Scatter3d(
+                    x=x_arr[tb:fi+1], y=z_arr[tb:fi+1], z=y_arr[tb:fi+1],
+                    mode="markers+lines",
+                    marker=dict(color="#58a6ff", size=5),
+                    line=dict(color="#58a6ff", width=3),
+                ),
+                go.Scatter3d(
+                    x=np.full(fi - tb + 1, distance_m),
+                    y=target_speed_ms * t_arr[tb:fi+1],
+                    z=np.zeros(fi - tb + 1),
+                    mode="markers+lines",
+                    marker=dict(color="#f78166", size=5),
+                    line=dict(color="#f78166", width=3),
+                ),
+            ],
+            traces=[4, 5],
+            name=str(fi),
+        ))
+
+    ann_text = (
+        f"Hedef Hızı: {speed_kmh} km/h  |  TOF: {tof:.4f} s<br>"
+        f"Lead: {lead_m:.3f} m  |  Drop: {drop:.3f} m<br>"
+        f"Wind Drift: {wind_drift:.3f} m  |  Impact Y: {impact_y:.3f} m  |  Impact Z: {impact_z:.3f} m<br>"
+        f"Gerekli Elevasyon: {required_elev:.4f}°  |  Tilt: {tilt_deg:.4f}°"
+    )
+
+    fig = go.Figure(
+        data=[ghost_bullet, ghost_target, lead_pt, impact_pt, anim_bullet, anim_target] + extra,
+        frames=frames,
+        layout=go.Layout(
+            title=dict(
+                text=f"3D Atış Simülasyonu — {ammo_name} — {speed_kmh} km/h — {tilt_deg:.2f}°",
+                font=dict(color="#58a6ff", size=14),
+            ),
+            paper_bgcolor="#0d1117",
+            plot_bgcolor="#0d1117",
+            scene=dict(
+                bgcolor="#0d1117",
+                xaxis=dict(title="X — Downrange (m)", color="#8b949e", gridcolor="#30363d"),
+                yaxis=dict(title="Z — Lateral (m)",   color="#8b949e", gridcolor="#30363d"),
+                zaxis=dict(title="Y — Vertical (m)",  color="#8b949e", gridcolor="#30363d"),
+            ),
+            legend=dict(font=dict(color="#e6edf3"), bgcolor="#161b22", bordercolor="#30363d"),
+            annotations=[dict(
+                text=ann_text, align="left", showarrow=False,
+                xref="paper", yref="paper", x=0.01, y=0.98,
+                bgcolor="#161b22", bordercolor="#30363d", borderwidth=1,
+                font=dict(color="#8b949e", size=11),
+            )],
+            updatemenus=[dict(
+                type="buttons", showactive=False,
+                y=0, x=0.5, xanchor="center",
+                buttons=[
+                    dict(label="▶ Play", method="animate",
+                         args=[None, {"frame": {"duration": 30, "redraw": True},
+                                      "fromcurrent": True, "transition": {"duration": 0}}]),
+                    dict(label="⏸ Pause", method="animate",
+                         args=[[None], {"frame": {"duration": 0, "redraw": False},
+                                        "mode": "immediate", "transition": {"duration": 0}}]),
+                ],
+            )],
+            sliders=[dict(
+                active=0,
+                currentvalue={"prefix": "Frame: "},
+                pad={"t": 50},
+                steps=[dict(
+                    args=[[f.name], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+                    label=str(i), method="animate",
+                ) for i, f in enumerate(frames)],
+            )],
+            height=620,
+            margin=dict(l=0, r=0, t=60, b=80),
+        ),
+    )
+    return fig
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SESSION STATE — must be initialised BEFORE sidebar widgets render
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -670,7 +899,8 @@ if "ammo_sel_prev" not in st.session_state:
         "ammo_sel_prev":    _FIRST_KEY,
     })
 
-for _k in ("df", "mode", "mach_info", "ammo_snapshot"):
+for _k in ("df", "mode", "mach_info", "ammo_snapshot", "sim_params",
+           "sim3d_fig_single", "sim3d_fig_range"):
     if _k not in st.session_state:
         st.session_state[_k] = None
 
@@ -931,6 +1161,16 @@ if calc_btn:
             "avg_cd":       round(_sim["avg_cd"],        4),
         }
         st.session_state["ammo_snapshot"] = _ammo_snap
+        st.session_state["sim_params"] = dict(
+            distance_m=float(distance), tilt_deg=float(tilt_angle),
+            temp_c=float(temperature), pressure_hpa=float(pressure),
+            wind_x=float(wind_x), wind_z=float(wind_z),
+            bullet_mass_g=float(bullet_mass), bullet_diam_mm=float(bullet_diam),
+            muzzle_vel_ms=float(muzzle_vel), cd_base=float(cd_val),
+            use_mach_table=bool(use_mach_table),
+        )
+        st.session_state["sim3d_fig_single"] = None
+        st.session_state["sim3d_fig_range"]  = None
 
     else:  # Tilt Aralığı
         valid = True
@@ -959,6 +1199,16 @@ if calc_btn:
             st.session_state["mode"]          = "Tilt Aralığı"
             st.session_state["mach_info"]     = None
             st.session_state["ammo_snapshot"] = _ammo_snap
+            st.session_state["sim_params"] = dict(
+                distance_m=float(distance), tilt_deg=None,
+                temp_c=float(temperature), pressure_hpa=float(pressure),
+                wind_x=float(wind_x), wind_z=float(wind_z),
+                bullet_mass_g=float(bullet_mass), bullet_diam_mm=float(bullet_diam),
+                muzzle_vel_ms=float(muzzle_vel), cd_base=float(cd_val),
+                use_mach_table=bool(use_mach_table),
+            )
+            st.session_state["sim3d_fig_single"] = None
+            st.session_state["sim3d_fig_range"]  = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1122,6 +1372,55 @@ if mode == "Tek Tilt":
 
     st.download_button("⬇ sonuc.csv İndir", _build_csv(df), "sonuc.csv", "text/csv")
 
+    # ── 3D Atış Simülasyonu ───────────────────────────────────────────────────
+    st.divider()
+    st.markdown('<div class="section-header">3D Atış Simülasyonu</div>',
+                unsafe_allow_html=True)
+
+    _sp = st.session_state.get("sim_params")
+    if _sp:
+        _sim3d_speed_s = st.number_input(
+            "Hedef Hızı (km/h)", value=100, min_value=1, max_value=500, step=1,
+            key="sim3d_speed_single",
+        )
+        if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_single"):
+            with st.spinner("3D simülasyon hesaplanıyor…"):
+                _traj = simulate_trajectory_points(
+                    _sp["distance_m"], _sp["tilt_deg"],
+                    _sp["temp_c"], _sp["pressure_hpa"],
+                    _sp["wind_x"], _sp["wind_z"],
+                    _sp["bullet_mass_g"], _sp["bullet_diam_mm"],
+                    _sp["muzzle_vel_ms"], _sp["cd_base"],
+                    use_mach_table=_sp["use_mach_table"],
+                )
+                _tgt_ms = _sim3d_speed_s / 3.6
+                _lead_s = _tgt_ms * _traj["tof"]
+                _row0   = df.iloc[0]
+                _fig3d  = make_3d_animation(
+                    traj=_traj,
+                    tof=_traj["tof"],
+                    impact_y=_traj["impact_y"],
+                    impact_z=_traj["impact_z"],
+                    lead_m=_lead_s,
+                    distance_m=_sp["distance_m"],
+                    target_speed_ms=_tgt_ms,
+                    wind_x=_sp["wind_x"],
+                    wind_z=_sp["wind_z"],
+                    required_elev=float(_row0["Required Elevation (°)"]),
+                    drop=float(_row0["Drop (m)"]),
+                    wind_drift=float(_row0["Wind Drift (m)"]),
+                    ammo_name=ammo_snap.get("name", "—"),
+                    speed_kmh=_sim3d_speed_s,
+                    tilt_deg=_sp["tilt_deg"],
+                )
+                st.session_state["sim3d_fig_single"] = _fig3d
+
+        _fig3d_s = st.session_state.get("sim3d_fig_single")
+        if _fig3d_s is not None:
+            st.plotly_chart(_fig3d_s, use_container_width=True)
+    else:
+        st.info("Önce ⚡ Hesapla butonuna basın.")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  TILT ARALIĞI MODE
@@ -1230,3 +1529,66 @@ else:
     st.dataframe(show_df.style.format(fmt), use_container_width=True, height=430)
 
     st.download_button("⬇ sonuc.csv İndir", _build_csv(df), "sonuc.csv", "text/csv")
+
+    # ── 3D Atış Simülasyonu ───────────────────────────────────────────────────
+    st.divider()
+    st.markdown('<div class="section-header">3D Atış Simülasyonu</div>',
+                unsafe_allow_html=True)
+
+    _sp = st.session_state.get("sim_params")
+    if _sp:
+        _unique_tilts  = sorted(df["Tilt (°)"].unique().tolist())
+        _tilt_labels   = [f"{t:.4f}°" for t in _unique_tilts]
+        _sel_tilt_lbl  = st.selectbox("Tilt Seçin", _tilt_labels, key="sim3d_tilt_range")
+        _sel_tilt_val  = _unique_tilts[_tilt_labels.index(_sel_tilt_lbl)]
+
+        _sim3d_speed_r = st.number_input(
+            "Hedef Hızı (km/h)", value=100, min_value=1, max_value=500, step=1,
+            key="sim3d_speed_range",
+        )
+        if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_range"):
+            with st.spinner("3D simülasyon hesaplanıyor…"):
+                _traj = simulate_trajectory_points(
+                    _sp["distance_m"], _sel_tilt_val,
+                    _sp["temp_c"], _sp["pressure_hpa"],
+                    _sp["wind_x"], _sp["wind_z"],
+                    _sp["bullet_mass_g"], _sp["bullet_diam_mm"],
+                    _sp["muzzle_vel_ms"], _sp["cd_base"],
+                    use_mach_table=_sp["use_mach_table"],
+                )
+                _tgt_ms = _sim3d_speed_r / 3.6
+                _lead_r = _tgt_ms * _traj["tof"]
+                _trows  = df[
+                    (df["Tilt (°)"] == _sel_tilt_val) &
+                    (df["Hedef Hızı (km/h)"] == _sim3d_speed_r)
+                ]
+                if not _trows.empty:
+                    _req_e = float(_trows.iloc[0]["Required Elevation (°)"])
+                    _drp   = float(_trows.iloc[0]["Drop (m)"])
+                    _wdr   = float(_trows.iloc[0]["Wind Drift (m)"])
+                else:
+                    _req_e = 0.0; _drp = 0.0; _wdr = 0.0
+                _fig3d = make_3d_animation(
+                    traj=_traj,
+                    tof=_traj["tof"],
+                    impact_y=_traj["impact_y"],
+                    impact_z=_traj["impact_z"],
+                    lead_m=_lead_r,
+                    distance_m=_sp["distance_m"],
+                    target_speed_ms=_tgt_ms,
+                    wind_x=_sp["wind_x"],
+                    wind_z=_sp["wind_z"],
+                    required_elev=_req_e,
+                    drop=_drp,
+                    wind_drift=_wdr,
+                    ammo_name=ammo_snap.get("name", "—"),
+                    speed_kmh=_sim3d_speed_r,
+                    tilt_deg=_sel_tilt_val,
+                )
+                st.session_state["sim3d_fig_range"] = _fig3d
+
+        _fig3d_r = st.session_state.get("sim3d_fig_range")
+        if _fig3d_r is not None:
+            st.plotly_chart(_fig3d_r, use_container_width=True)
+    else:
+        st.info("Önce ⚡ Hesapla butonuna basın.")

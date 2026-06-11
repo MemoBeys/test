@@ -743,6 +743,7 @@ def make_3d_animation(
         required_elev, drop, wind_drift,
         ammo_name, speed_kmh, tilt_deg,
         entered_tilt_deg=None,
+        scale_mode: str = "visual",
 ) -> go.Figure:
     """
     Animated Plotly 3D figure.
@@ -751,11 +752,11 @@ def make_3d_animation(
       Y = lateral   (physics z)
       Z = vertical  (physics y)
 
-    aspect ratio — manual, derived from actual data extents so
-    1 m is displayed as 1 m on every axis.
+    scale_mode = "real"   → aspectmode="data"   (true physical proportions)
+    scale_mode = "visual" → aspectmode="manual" (exaggerated Y/Z for readability)
 
-    camera — uirevision="keep-camera" prevents Play/Pause/slider
-    from resetting the user's chosen viewpoint.
+    uirevision="keep-camera" prevents Play/Pause/slider from resetting the
+    user's chosen viewpoint. Frames contain NO layout/camera keys.
     """
     if entered_tilt_deg is None:
         entered_tilt_deg = tilt_deg
@@ -766,13 +767,26 @@ def make_3d_animation(
     z_arr = np.array(traj["z"])   # physics lateral   → Plotly Y
     n = len(t_arr)
 
-    # ── Physical aspect ratio ─────────────────────────────────────────────────
-    # Normalise so the longest axis = 1.0 and shorter axes shrink proportionally.
-    _ax = distance_m
-    _ay = max(abs(lead_m),    5.0)   # lateral (Plotly Y)
-    _az = max(abs(impact_y),  2.0)   # vertical (Plotly Z)
-    _scale = max(_ax, _ay, _az, 10.0)
-    _ar = dict(x=_ax / _scale, y=_ay / _scale, z=_az / _scale)
+    # ── Aspect ratio & camera based on scale mode ─────────────────────────────
+    if scale_mode == "real":
+        _aspect_mode = "data"
+        _ar = dict(x=1.0, y=1.0, z=1.0)   # ignored by "data" mode
+        _init_cam = dict(eye=dict(x=1.6, y=1.2, z=0.8))
+        _mode_note = (
+            "Bu görünüm eksenleri fiziksel oranda gösterir; "
+            "küçük Y/Z sapmaları zor görünebilir."
+        )
+    else:  # "visual"
+        _aspect_mode = "manual"
+        _x_r = 4.0
+        _z_r = max(1.2, min(2.5, abs(lead_m) / max(distance_m, 1.0) * 8.0))
+        _y_r = 1.2
+        _ar = dict(x=_x_r, y=_y_r, z=_z_r)
+        _init_cam = dict(eye=dict(x=1.8, y=1.4, z=0.9))
+        _mode_note = (
+            "Bu görünüm okunabilirlik için Y/Z eksenlerini görsel olarak büyütür; "
+            "fiziksel ölçüler eksen değerlerinde doğrudur."
+        )
 
     step = max(1, n // 80)
     frame_idx = list(range(0, n, step))
@@ -866,7 +880,8 @@ def make_3d_animation(
         f"Girilen Tilt: {entered_tilt_deg:.4f}°  |  Required Elevation: {required_elev:.4f}°<br>"
         f"Vertical Miss (Impact Y): {impact_y:.3f} m  |  TOF: {tof:.4f} s<br>"
         f"Lead = Hedef Hızı × TOF: {lead_m:.3f} m  |  Lateral Aim Z: {lead_m:.3f} m<br>"
-        f"Wind Drift: {wind_drift:.3f} m  |  Hedef Hızı: {speed_kmh} km/h"
+        f"Wind Drift: {wind_drift:.3f} m  |  Hedef Hızı: {speed_kmh} km/h<br>"
+        f"<i>{_mode_note}</i>"
     )
 
     static_traces = [ghost_bullet, ghost_target, lead_pt, impact_pt, vmiss,
@@ -932,9 +947,9 @@ def make_3d_animation(
             plot_bgcolor="#0d1117",
             scene=dict(
                 bgcolor="#0d1117",
-                aspectmode="manual",
+                aspectmode=_aspect_mode,
                 aspectratio=_ar,
-                camera=_cam_iso,   # initial view only — uirevision preserves it after that
+                camera=_init_cam,   # initial view only — uirevision preserves after that
                 xaxis=dict(title="X — Downrange (m)", color="#8b949e",
                            gridcolor="#30363d", zerolinecolor="#30363d"),
                 yaxis=dict(title="Z — Lateral (m)",   color="#8b949e",
@@ -1478,6 +1493,12 @@ if mode == "Tek Tilt":
         with _sc3:
             _use_req_elev_s = st.checkbox("Required elevation ile göster", value=False, key="sim3d_req_s")
 
+        _scale_lbl_s = st.radio(
+            "Ölçek Modu", ["Görsel Ölçek", "Gerçek Ölçek"],
+            index=0, horizontal=True, key="sim3d_scale_s",
+        )
+        _scale_mode_s = "visual" if _scale_lbl_s == "Görsel Ölçek" else "real"
+
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_single"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
                 _row0    = df.iloc[0]
@@ -1528,6 +1549,7 @@ if mode == "Tek Tilt":
                     speed_kmh=_sim3d_speed_s,
                     tilt_deg=_sim_tlt,
                     entered_tilt_deg=_ent_tlt,
+                    scale_mode=_scale_mode_s,
                 )
                 st.session_state["sim3d_fig_single"] = _fig3d
 
@@ -1672,6 +1694,12 @@ else:
         with _rc4:
             _use_req_elev_r = st.checkbox("Required elevation ile göster",  value=False, key="sim3d_req_r")
 
+        _scale_lbl_r = st.radio(
+            "Ölçek Modu", ["Görsel Ölçek", "Gerçek Ölçek"],
+            index=0, horizontal=True, key="sim3d_scale_r",
+        )
+        _scale_mode_r = "visual" if _scale_lbl_r == "Görsel Ölçek" else "real"
+
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_range"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
                 _trows = df[
@@ -1729,6 +1757,7 @@ else:
                     speed_kmh=_sim3d_speed_r,
                     tilt_deg=_sim_tlt,
                     entered_tilt_deg=_ent_tlt,
+                    scale_mode=_scale_mode_r,
                 )
                 st.session_state["sim3d_fig_range"] = _fig3d
 

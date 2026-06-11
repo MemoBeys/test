@@ -700,6 +700,70 @@ def sweep_tilt_range(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  SWEEP — Mühimmat Karşılaştırma
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def compare_ammunition(
+        ammo_keys,
+        distance_m, tilt_deg, target_speed_kmh,
+        temp_c, pressure_hpa, wind_x, wind_z,
+        use_mach_table: bool  = False,
+        do_pk:            bool  = False,
+        target_radius_m:  float = 1.0,
+        burst_size:       int   = 25,
+        dispersion_mrad:  float = 1.5,
+        tracking_error_m: float = 0.5,
+        lead_error_coeff: float = 0.02,
+        num_trials:       int   = 1000,
+        seed:             int   = 42,
+) -> pd.DataFrame:
+    """Run compute_scenario for every ammo_key and return a comparison DataFrame."""
+    target_speed_ms = target_speed_kmh / 3.6
+    rng = np.random.default_rng(seed) if do_pk else None
+    rows = []
+    for key in ammo_keys:
+        a = AMMO_DB[key]
+        s = compute_scenario(
+            distance_m, tilt_deg, temp_c, pressure_hpa,
+            wind_x, wind_z,
+            a["mass_g"], a["diam_mm"], a["muzzle_ms"], a["cd"],
+            use_mach_table=use_mach_table,
+        )
+        lead = target_speed_ms * s["tof"]
+        row = {
+            "Mühimmat":               key,
+            "Tip":                    a.get("type", ""),
+            "Projectile Weight (g)":  a.get("projectile_weight_g", a["mass_g"]),
+            "Cartridge Weight (g)":   a.get("cartridge_weight_g", "—"),
+            "Çap (mm)":               a["diam_mm"],
+            "Uzunluk (mm)":           a["length_mm"],
+            "Muzzle Velocity (m/s)":  a["muzzle_ms"],
+            "Cd":                     a["cd"],
+            "TOF (s)":                round(s["tof"],             4),
+            "Lead (m)":               round(lead,                 3),
+            "Drop (m)":               round(s["drop"],            3),
+            "Wind Drift (m)":         round(s["wind_drift"],      3),
+            "Impact Y (m)":           round(s["impact_y"],        3),
+            "Required Elevation (°)": round(s["required_elev"],   4),
+            "Dikey Hata (°)":         round(s["vert_error_deg"],  4),
+            "Impact Velocity (m/s)":  round(s["impact_velocity"], 2),
+            "Impact Energy (J)":      round(s["impact_energy"],   1),
+            "Impact Mach":            round(s["impact_mach"],     3),
+            "Avg Cd":                 round(s["avg_cd"],          4),
+        }
+        if do_pk:
+            pk_r = compute_pk(
+                distance_m, lead, target_radius_m,
+                burst_size, dispersion_mrad,
+                tracking_error_m, lead_error_coeff,
+                num_trials, rng,
+            )
+            row.update(_pk_row(pk_r, burst_size, target_radius_m))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  UI HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -716,6 +780,21 @@ def make_figure(df, x_col, y_col, color, ylabel):
         spine.set_edgecolor("#30363d")
     ax.grid(color="#21262d", linestyle="--", linewidth=0.6)
     ax.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.2f"))
+    plt.tight_layout(pad=0.8)
+    return fig
+
+
+def make_bar_figure(df, label_col, val_col, color, xlabel):
+    """Horizontal bar chart, dark theme — for ammo comparison."""
+    fig, ax = plt.subplots(figsize=(5.5, max(2.0, len(df) * 0.65)))
+    fig.patch.set_facecolor("#161b22")
+    ax.set_facecolor("#0d1117")
+    ax.barh(df[label_col].astype(str), df[val_col], color=color)
+    ax.set_xlabel(xlabel, color="#8b949e", fontsize=9)
+    ax.tick_params(colors="#8b949e", labelsize=8)
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#30363d")
+    ax.grid(color="#21262d", linestyle="--", linewidth=0.6, axis="x")
     plt.tight_layout(pad=0.8)
     return fig
 
@@ -1003,7 +1082,8 @@ if "ammo_sel_prev" not in st.session_state:
     })
 
 for _k in ("df", "mode", "mach_info", "ammo_snapshot", "sim_params",
-           "sim3d_fig_single", "sim3d_fig_range"):
+           "sim3d_fig_single", "sim3d_fig_range",
+           "compare_df", "compare_params", "compare_3d_fig"):
     if _k not in st.session_state:
         st.session_state[_k] = None
 
@@ -1035,115 +1115,133 @@ st.divider()
 
 with st.sidebar:
 
+    # ── Analiz Modu ───────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Analiz Modu</div>',
+                unsafe_allow_html=True)
+    analysis_mode = st.radio(
+        "", ["Tek Tilt", "Tilt Aralığı", "Mühimmat Karşılaştırma"],
+        index=0, key="analysis_mode",
+        label_visibility="collapsed",
+    )
+
     # ── Mühimmat Seçimi ───────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Mühimmat Seçimi</div>',
                 unsafe_allow_html=True)
 
-    selected_ammo = st.selectbox(
-        "Mühimmat", list(AMMO_DB.keys()), key="ammo_selector",
-    )
+    if analysis_mode == "Mühimmat Karşılaştırma":
+        comp_ammo_keys = st.multiselect(
+            "Karşılaştırılacak Mühimmatlar",
+            list(AMMO_DB.keys()),
+            default=list(AMMO_DB.keys()),
+            key="comp_ammo_keys",
+        )
+        # Dummy values — unused in comparison mode
+        selected_ammo  = _FIRST_KEY
+        bullet_name    = AMMO_DB[_FIRST_KEY]["display"]
+        bullet_mass    = AMMO_DB[_FIRST_KEY]["mass_g"]
+        bullet_diam    = AMMO_DB[_FIRST_KEY]["diam_mm"]
+        bullet_len     = AMMO_DB[_FIRST_KEY]["length_mm"]
+        muzzle_vel     = AMMO_DB[_FIRST_KEY]["muzzle_ms"]
+        cd_val         = AMMO_DB[_FIRST_KEY]["cd"]
+        use_mach_table = False
+    else:
+        comp_ammo_keys = []
 
-    # Seçim değiştiğinde input alanlarını güncelle (widget'lar henüz render edilmedi)
-    if selected_ammo != st.session_state["ammo_sel_prev"]:
-        _a = AMMO_DB[selected_ammo]
-        st.session_state.update({
-            "ammo_input_name": _a["display"],
-            "ammo_input_mass": _a["mass_g"],
-            "ammo_input_diam": _a["diam_mm"],
-            "ammo_input_len":  _a["length_mm"],
-            "ammo_input_vel":  _a["muzzle_ms"],
-            "ammo_input_cd":   _a["cd"],
-            "ammo_sel_prev":   selected_ammo,
-        })
+        selected_ammo = st.selectbox(
+            "Mühimmat", list(AMMO_DB.keys()), key="ammo_selector",
+        )
 
-    # Info kartı — seçili mühimmatın özellikleri (dinamik: sadece mevcut alanlar gösterilir)
-    _ai = AMMO_DB[selected_ammo]
+        # Seçim değiştiğinde input alanlarını güncelle
+        if selected_ammo != st.session_state["ammo_sel_prev"]:
+            _a = AMMO_DB[selected_ammo]
+            st.session_state.update({
+                "ammo_input_name": _a["display"],
+                "ammo_input_mass": _a["mass_g"],
+                "ammo_input_diam": _a["diam_mm"],
+                "ammo_input_len":  _a["length_mm"],
+                "ammo_input_vel":  _a["muzzle_ms"],
+                "ammo_input_cd":   _a["cd"],
+                "ammo_sel_prev":   selected_ammo,
+            })
 
-    def _ai_get(key, fmt=None):
-        v = _ai.get(key)
-        if v is None:
-            return None
-        return fmt.format(v) if fmt else str(v)
+        # Info kartı — seçili mühimmatın özellikleri (dinamik)
+        _ai = AMMO_DB[selected_ammo]
 
-    _info_lines = [f"<b>{selected_ammo}</b>"]
-    if _ai.get("type"):
-        _info_lines.append(f"<b>Tip:</b> {_ai['type']}")
-    if _ai.get("description_tr"):
-        _info_lines.append(f"<b>Açıklama:</b> {_ai['description_tr']}")
-    _info_lines.append("")  # boş satır
+        def _ai_get(key, fmt=None):
+            v = _ai.get(key)
+            if v is None:
+                return None
+            return fmt.format(v) if fmt else str(v)
 
-    # Fizik parametreleri — her zaman mevcut
-    _phys = (
-        f"<b>Mermi Ağırlığı (Balistik):</b> {_ai['mass_g']} g &nbsp;·&nbsp; "
-        f"<b>Çap:</b> {_ai['diam_mm']} mm &nbsp;·&nbsp; "
-        f"<b>Uzunluk:</b> {_ai['length_mm']} mm"
-    )
-    _info_lines.append(_phys)
-    _vel_line = f"<b>Namlu Hızı:</b> {_ai['muzzle_ms']} m/s"
-    if _ai.get("muzzle_tolerance_ms"):
-        _vel_line += f"  (tolerans: {_ai['muzzle_tolerance_ms']})"
-    _info_lines.append(_vel_line)
-    if _ai.get("velocity_std_ms") is not None:
-        _info_lines.append(f"<b>Hız Std Sapması:</b> {_ai['velocity_std_ms']} m/s")
+        _info_lines = [f"<b>{selected_ammo}</b>"]
+        if _ai.get("type"):
+            _info_lines.append(f"<b>Tip:</b> {_ai['type']}")
+        if _ai.get("description_tr"):
+            _info_lines.append(f"<b>Açıklama:</b> {_ai['description_tr']}")
+        _info_lines.append("")
 
-    # İsteğe bağlı balistik/yapısal alanlar
-    _OPTIONAL_FIELDS = [
-        ("cartridge_weight_g",      "<b>Fişek Ağırlığı:</b> {} g"),
-        ("projectile_weight_g",     "<b>Projectile Weight:</b> {} g"),
-        ("propellant_weight_g",     "<b>Barut Ağırlığı:</b> {} g"),
-        ("case_length_mm",          "<b>Kovan Boyu:</b> {} mm"),
-        ("chamber_pressure_psi",    "<b>Namlu Basıncı:</b> {} psi"),
-        ("max_pressure_psi",        "<b>Maks Basınç:</b> {} psi"),
-        ("avg_pressure_kg_cm2",     "<b>Ort. Basınç:</b> {} kg/cm²"),
-        ("dispersion",              "<b>Dağılım:</b> {}"),
-        ("bullet_pull_force_kgf",   "<b>İrtibat Kuvveti:</b> {}"),
-        ("movement_time_ms",        "<b>Harekete Geçme:</b> {}"),
-        ("armor_penetration",       "<b>Zırh Delme:</b> {}"),
-        ("accuracy",                "<b>Hassasiyet:</b> {}"),
-        ("case_model",              "<b>Kovan Model:</b> {}"),
-        ("case_material",           "<b>Kovan Malzeme:</b> {}"),
-        ("projectile_body_material","<b>Mermi Gövde:</b> {}"),
-        ("fuze",                    "<b>Tapa:</b> {}"),
-        ("nose_type",               "<b>Mermi Tapası:</b> {}"),
-        ("primer",                  "<b>Kapsül:</b> {}"),
-        ("link_type",               "<b>Mayon:</b> {}"),
-        ("propellant",              "<b>Barut:</b> {}"),
-        ("weapon",                  "<b>Kullanılan Silah:</b> {}"),
-    ]
-    _info_lines.append("")
-    for _field, _tmpl in _OPTIONAL_FIELDS:
-        _v = _ai.get(_field)
-        if _v is not None:
-            _info_lines.append(_tmpl.format(_v))
+        _phys = (
+            f"<b>Mermi Ağırlığı (Balistik):</b> {_ai['mass_g']} g &nbsp;·&nbsp; "
+            f"<b>Çap:</b> {_ai['diam_mm']} mm &nbsp;·&nbsp; "
+            f"<b>Uzunluk:</b> {_ai['length_mm']} mm"
+        )
+        _info_lines.append(_phys)
+        _vel_line = f"<b>Namlu Hızı:</b> {_ai['muzzle_ms']} m/s"
+        if _ai.get("muzzle_tolerance_ms"):
+            _vel_line += f"  (tolerans: {_ai['muzzle_tolerance_ms']})"
+        _info_lines.append(_vel_line)
+        if _ai.get("velocity_std_ms") is not None:
+            _info_lines.append(f"<b>Hız Std Sapması:</b> {_ai['velocity_std_ms']} m/s")
 
-    st.markdown(
-        '<div class="info-box">' + "<br>".join(_info_lines) + "</div>",
-        unsafe_allow_html=True,
-    )
+        _OPTIONAL_FIELDS = [
+            ("cartridge_weight_g",      "<b>Fişek Ağırlığı:</b> {} g"),
+            ("projectile_weight_g",     "<b>Projectile Weight:</b> {} g"),
+            ("propellant_weight_g",     "<b>Barut Ağırlığı:</b> {} g"),
+            ("case_length_mm",          "<b>Kovan Boyu:</b> {} mm"),
+            ("chamber_pressure_psi",    "<b>Namlu Basıncı:</b> {} psi"),
+            ("max_pressure_psi",        "<b>Maks Basınç:</b> {} psi"),
+            ("avg_pressure_kg_cm2",     "<b>Ort. Basınç:</b> {} kg/cm²"),
+            ("dispersion",              "<b>Dağılım:</b> {}"),
+            ("bullet_pull_force_kgf",   "<b>İrtibat Kuvveti:</b> {}"),
+            ("movement_time_ms",        "<b>Harekete Geçme:</b> {}"),
+            ("armor_penetration",       "<b>Zırh Delme:</b> {}"),
+            ("accuracy",                "<b>Hassasiyet:</b> {}"),
+            ("case_model",              "<b>Kovan Model:</b> {}"),
+            ("case_material",           "<b>Kovan Malzeme:</b> {}"),
+            ("projectile_body_material","<b>Mermi Gövde:</b> {}"),
+            ("fuze",                    "<b>Tapa:</b> {}"),
+            ("nose_type",               "<b>Mermi Tapası:</b> {}"),
+            ("primer",                  "<b>Kapsül:</b> {}"),
+            ("link_type",               "<b>Mayon:</b> {}"),
+            ("propellant",              "<b>Barut:</b> {}"),
+            ("weapon",                  "<b>Kullanılan Silah:</b> {}"),
+        ]
+        _info_lines.append("")
+        for _field, _tmpl in _OPTIONAL_FIELDS:
+            _v = _ai.get(_field)
+            if _v is not None:
+                _info_lines.append(_tmpl.format(_v))
 
-    # ── Mühimmat (düzenlenebilir parametreler) ────────────────────────────────
-    st.markdown('<div class="section-header">Mühimmat</div>', unsafe_allow_html=True)
-    bullet_name = st.text_input("Mermi Adı",         key="ammo_input_name")
-    bullet_mass = st.number_input("Ağırlık (g)",      min_value=1.0,  step=0.1,   key="ammo_input_mass")
-    bullet_diam = st.number_input("Çap (mm)",         min_value=1.0,  step=0.1,   key="ammo_input_diam")
-    bullet_len  = st.number_input("Uzunluk (mm)",     min_value=0.1,  step=0.1,   key="ammo_input_len",
-                                   help="Kayıt amaçlı — fizik hesabında kullanılmaz.")
-    muzzle_vel  = st.number_input("Namlu Hızı (m/s)", min_value=1.0,  step=1.0,   key="ammo_input_vel")
-    cd_val      = st.number_input("Cd (sabit)",       min_value=0.01, step=0.01,  key="ammo_input_cd",
-                                   format="%.3f",
-                                   help="Mach Dependent Cd kapalıyken bu değer kullanılır.")
-    use_mach_table = st.checkbox(
-        "Mach Dependent Cd", value=False,
-        help="Açıksa MACH_TABLE/CD_TABLE ile np.interp. Kapalıysa sabit Cd.",
-    )
+        st.markdown(
+            '<div class="info-box">' + "<br>".join(_info_lines) + "</div>",
+            unsafe_allow_html=True,
+        )
 
-    # ── Analiz Modu ───────────────────────────────────────────────────────────
-    st.markdown('<div class="section-header">Analiz Modu</div>', unsafe_allow_html=True)
-    analysis_mode = st.radio(
-        "", ["Tek Tilt", "Tilt Aralığı"],
-        index=0, key="analysis_mode",
-        label_visibility="collapsed",
-    )
+        # ── Mühimmat (düzenlenebilir parametreler) ────────────────────────────
+        st.markdown('<div class="section-header">Mühimmat</div>', unsafe_allow_html=True)
+        bullet_name = st.text_input("Mermi Adı",         key="ammo_input_name")
+        bullet_mass = st.number_input("Ağırlık (g)",      min_value=1.0,  step=0.1,   key="ammo_input_mass")
+        bullet_diam = st.number_input("Çap (mm)",         min_value=1.0,  step=0.1,   key="ammo_input_diam")
+        bullet_len  = st.number_input("Uzunluk (mm)",     min_value=0.1,  step=0.1,   key="ammo_input_len",
+                                       help="Kayıt amaçlı — fizik hesabında kullanılmaz.")
+        muzzle_vel  = st.number_input("Namlu Hızı (m/s)", min_value=1.0,  step=1.0,   key="ammo_input_vel")
+        cd_val      = st.number_input("Cd (sabit)",       min_value=0.01, step=0.01,  key="ammo_input_cd",
+                                       format="%.3f",
+                                       help="Mach Dependent Cd kapalıyken bu değer kullanılır.")
+        use_mach_table = st.checkbox(
+            "Mach Dependent Cd", value=False,
+            help="Açıksa MACH_TABLE/CD_TABLE ile np.interp. Kapalıysa sabit Cd.",
+        )
 
     # ── Koşullar ──────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Koşullar</div>', unsafe_allow_html=True)
@@ -1154,10 +1252,26 @@ with st.sidebar:
             "Tilt / Elevation (°)", value=2.0,
             min_value=-45.0, max_value=45.0, step=0.1,
         )
-    else:
+        comp_tilt         = tilt_angle
+        comp_target_speed = 100.0
+    elif analysis_mode == "Tilt Aralığı":
         tilt_start = st.number_input("Başlangıç Tilt (°)", value=1.0,  min_value=-45.0, max_value=45.0, step=0.1)
         tilt_end   = st.number_input("Bitiş Tilt (°)",     value=15.0, min_value=-45.0, max_value=45.0, step=0.1)
         tilt_step  = st.number_input("Tilt Adımı (°)",     value=0.5,  min_value=0.01,  max_value=10.0, step=0.1, format="%.2f")
+        comp_tilt         = tilt_start
+        comp_target_speed = 100.0
+    else:  # Mühimmat Karşılaştırma
+        comp_tilt = st.number_input(
+            "Tilt / Elevation (°)", value=2.0,
+            min_value=-45.0, max_value=45.0, step=0.1,
+            key="comp_tilt_input",
+        )
+        comp_target_speed = float(st.number_input(
+            "Hedef Hızı (km/h)", value=100,
+            min_value=1, max_value=500, step=1,
+            key="comp_target_speed_input",
+        ))
+        tilt_angle = comp_tilt
 
     temperature = st.number_input("Sıcaklık (°C)", value=15.0,    min_value=-60.0, max_value=60.0, step=0.5)
     pressure    = st.number_input("Basınç (hPa)",  value=1013.25, min_value=800.0, step=0.5)
@@ -1216,17 +1330,6 @@ with st.sidebar:
 
 if calc_btn:
 
-    # Anlık mühimmat snapshot'ı — kullanıcının o anki (düzenlenmiş) değerlerini saklar
-    _ammo_snap = {
-        "name":      selected_ammo,
-        "display":   AMMO_DB[selected_ammo]["display"],
-        "type":      AMMO_DB[selected_ammo]["type"],
-        "mass_g":    float(bullet_mass),
-        "diam_mm":   float(bullet_diam),
-        "length_mm": float(bullet_len),
-        "muzzle_ms": float(muzzle_vel),
-    }
-
     _pk_kwargs = dict(
         do_pk=do_pk,
         target_radius_m=float(target_radius),
@@ -1239,6 +1342,15 @@ if calc_btn:
     )
 
     if analysis_mode == "Tek Tilt":
+        _ammo_snap = {
+            "name":      selected_ammo,
+            "display":   AMMO_DB[selected_ammo]["display"],
+            "type":      AMMO_DB[selected_ammo]["type"],
+            "mass_g":    float(bullet_mass),
+            "diam_mm":   float(bullet_diam),
+            "length_mm": float(bullet_len),
+            "muzzle_ms": float(muzzle_vel),
+        }
         _label = "Simülasyon çalışıyor (3D · RK4" + (" · Pk MC" if do_pk else "") + ")…"
         with st.spinner(_label):
             df_result = sweep(
@@ -1274,8 +1386,18 @@ if calc_btn:
         )
         st.session_state["sim3d_fig_single"] = None
         st.session_state["sim3d_fig_range"]  = None
+        st.session_state["compare_df"]       = None
 
-    else:  # Tilt Aralığı
+    elif analysis_mode == "Tilt Aralığı":
+        _ammo_snap = {
+            "name":      selected_ammo,
+            "display":   AMMO_DB[selected_ammo]["display"],
+            "type":      AMMO_DB[selected_ammo]["type"],
+            "mass_g":    float(bullet_mass),
+            "diam_mm":   float(bullet_diam),
+            "length_mm": float(bullet_len),
+            "muzzle_ms": float(muzzle_vel),
+        }
         valid = True
         if tilt_end < tilt_start:
             st.error("⚠ Bitiş Tilt, Başlangıç Tilt'ten küçük olamaz.")
@@ -1312,21 +1434,65 @@ if calc_btn:
             )
             st.session_state["sim3d_fig_single"] = None
             st.session_state["sim3d_fig_range"]  = None
+            st.session_state["compare_df"]       = None
+
+    else:  # Mühimmat Karşılaştırma
+        if not comp_ammo_keys:
+            st.error("⚠ En az bir mühimmat seçin.")
+        else:
+            _label = (
+                f"Mühimmat karşılaştırması ({len(comp_ammo_keys)} mühimmat · RK4"
+                + (" · Pk MC" if do_pk else "") + ")…"
+            )
+            with st.spinner(_label):
+                df_compare = compare_ammunition(
+                    comp_ammo_keys,
+                    float(distance), float(comp_tilt), float(comp_target_speed),
+                    float(temperature), float(pressure),
+                    float(wind_x), float(wind_z),
+                    use_mach_table=use_mach_table,
+                    **_pk_kwargs,
+                )
+            st.session_state["compare_df"]     = df_compare
+            st.session_state["mode"]           = "Mühimmat Karşılaştırma"
+            st.session_state["compare_params"] = dict(
+                distance_m=float(distance),
+                tilt_deg=float(comp_tilt),
+                target_speed_kmh=float(comp_target_speed),
+                temp_c=float(temperature),
+                pressure_hpa=float(pressure),
+                wind_x=float(wind_x),
+                wind_z=float(wind_z),
+                use_mach_table=bool(use_mach_table),
+            )
+            st.session_state["compare_3d_fig"]   = None
+            st.session_state["df"]               = None
+            st.session_state["sim3d_fig_single"] = None
+            st.session_state["sim3d_fig_range"]  = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SONUÇLAR
 # ═══════════════════════════════════════════════════════════════════════════════
 
-if st.session_state["df"] is None:
+_has_any_results = (
+    st.session_state["df"] is not None or
+    st.session_state.get("compare_df") is not None
+)
+if not _has_any_results:
     st.info("Sol panelden parametreleri girin ve **⚡ Hesapla** butonuna basın.")
     st.stop()
 
-df        = st.session_state["df"]
-mode      = st.session_state["mode"]
-ammo_snap = st.session_state.get("ammo_snapshot") or {}
+mode = st.session_state["mode"]
 
-_has_pk = "Pk (%)" in df.columns
+if mode in ("Tek Tilt", "Tilt Aralığı"):
+    df        = st.session_state["df"]
+    ammo_snap = st.session_state.get("ammo_snapshot") or {}
+    _has_pk   = "Pk (%)" in df.columns
+else:
+    df        = None
+    ammo_snap = {}
+    _has_pk   = False
 
 # ── TABLE FORMAT ──────────────────────────────────────────────────────────────
 BASE_FMT: dict = {
@@ -1564,7 +1730,7 @@ if mode == "Tek Tilt":
 #  TILT ARALIĞI MODE
 # ─────────────────────────────────────────────────────────────────────────────
 
-else:
+elif mode == "Tilt Aralığı":
 
     n_tilts  = df["Tilt (°)"].nunique()
     n_rows   = len(df)
@@ -1764,5 +1930,216 @@ else:
         _fig3d_r = st.session_state.get("sim3d_fig_range")
         if _fig3d_r is not None:
             st.plotly_chart(_fig3d_r, use_container_width=True)
+    else:
+        st.info("Önce ⚡ Hesapla butonuna basın.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MÜHİMMAT KARŞILAŞTIRMA MODE
+# ─────────────────────────────────────────────────────────────────────────────
+
+elif mode == "Mühimmat Karşılaştırma":
+
+    cdf  = st.session_state.get("compare_df")
+    cpar = st.session_state.get("compare_params") or {}
+
+    if cdf is None or cdf.empty:
+        st.info("Karşılaştırma sonucu bulunamadı.")
+        st.stop()
+
+    _chas_pk = "Pk (%)" in cdf.columns
+
+    # ── Başlık ────────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Mühimmat Karşılaştırma Sonuçları</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="info-box">'
+        f'<b>Mesafe:</b> {cpar.get("distance_m", "—")} m &nbsp;·&nbsp; '
+        f'<b>Tilt:</b> {cpar.get("tilt_deg", 0):.2f}° &nbsp;·&nbsp; '
+        f'<b>Hedef Hızı:</b> {cpar.get("target_speed_kmh", "—")} km/h &nbsp;·&nbsp; '
+        f'<b>Sıcaklık:</b> {cpar.get("temp_c", "—")} °C &nbsp;·&nbsp; '
+        f'<b>Basınç:</b> {cpar.get("pressure_hpa", "—")} hPa'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Özet metrik kartları ──────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Özet</div>', unsafe_allow_html=True)
+
+    _idx_tof = cdf["TOF (s)"].idxmin()
+    _idx_vel = cdf["Impact Velocity (m/s)"].idxmax()
+    _idx_ene = cdf["Impact Energy (J)"].idxmax()
+
+    _best_tof = cdf.loc[_idx_tof, "Mühimmat"]
+    _best_vel = cdf.loc[_idx_vel, "Mühimmat"]
+    _best_ene = cdf.loc[_idx_ene, "Mühimmat"]
+
+    sm1, sm2, sm3 = st.columns(3)
+    with sm1:
+        metric_card("En Kısa TOF",
+                    f"{cdf['TOF (s)'].min():.4f}",
+                    f"s — {_best_tof}")
+    with sm2:
+        metric_card("En Yüksek Impact Velocity",
+                    f"{cdf['Impact Velocity (m/s)'].max():.2f}",
+                    f"m/s — {_best_vel}")
+    with sm3:
+        metric_card("En Yüksek Impact Energy",
+                    f"{cdf['Impact Energy (J)'].max():.1f}",
+                    f"J — {_best_ene}")
+
+    if _chas_pk:
+        _idx_pk  = cdf["Pk (%)"].idxmax()
+        _best_pk = cdf.loc[_idx_pk, "Mühimmat"]
+        sm4, _, _ = st.columns(3)
+        with sm4:
+            metric_card("En Yüksek Pk",
+                        f"{cdf['Pk (%)'].max():.2f}",
+                        f"% — {_best_pk}")
+
+    st.divider()
+
+    # ── Karşılaştırma grafikleri ───────────────────────────────────────────────
+    st.markdown('<div class="section-header">Karşılaştırma Grafikleri</div>',
+                unsafe_allow_html=True)
+
+    bc1, bc2 = st.columns(2)
+    bc3, bc4 = st.columns(2)
+    bc5, bc6 = st.columns(2)
+
+    with bc1:
+        st.markdown("**TOF Karşılaştırması**")
+        _show_fig(make_bar_figure(cdf, "Mühimmat", "TOF (s)",               "#58a6ff", "TOF (s)"))
+    with bc2:
+        st.markdown("**Lead Karşılaştırması**")
+        _show_fig(make_bar_figure(cdf, "Mühimmat", "Lead (m)",              "#e3b341", "Lead (m)"))
+    with bc3:
+        st.markdown("**Drop Karşılaştırması**")
+        _show_fig(make_bar_figure(cdf, "Mühimmat", "Drop (m)",              "#3fb950", "Drop (m)"))
+    with bc4:
+        st.markdown("**Impact Velocity**")
+        _show_fig(make_bar_figure(cdf, "Mühimmat", "Impact Velocity (m/s)", "#ffa657", "Velocity (m/s)"))
+    with bc5:
+        st.markdown("**Impact Energy**")
+        _show_fig(make_bar_figure(cdf, "Mühimmat", "Impact Energy (J)",     "#d2a8ff", "Energy (J)"))
+
+    if _chas_pk:
+        with bc6:
+            st.markdown("**Pk (%)**")
+            _show_fig(make_bar_figure(cdf, "Mühimmat", "Pk (%)", "#f78166", "Pk (%)"))
+
+    st.divider()
+
+    # ── Tablo ─────────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Karşılaştırma Tablosu</div>',
+                unsafe_allow_html=True)
+
+    _cfmt = {
+        "TOF (s)":                "{:.4f}",
+        "Lead (m)":               "{:.3f}",
+        "Drop (m)":               "{:.3f}",
+        "Wind Drift (m)":         "{:.3f}",
+        "Impact Y (m)":           "{:.3f}",
+        "Required Elevation (°)": "{:.4f}",
+        "Dikey Hata (°)":         "{:.4f}",
+        "Impact Velocity (m/s)":  "{:.2f}",
+        "Impact Energy (J)":      "{:.1f}",
+        "Impact Mach":            "{:.3f}",
+        "Avg Cd":                 "{:.4f}",
+        "Cd":                     "{:.3f}",
+    }
+    if _chas_pk:
+        _cfmt.update({
+            "Pk (%)":                  "{:.2f}",
+            "Dispersion Sigma (m)":    "{:.3f}",
+            "Tracking Error Eff. (m)": "{:.3f}",
+            "Total Sigma (m)":         "{:.3f}",
+        })
+    _cfmt_active = {k: v for k, v in _cfmt.items() if k in cdf.columns}
+    st.dataframe(cdf.style.format(_cfmt_active), use_container_width=True)
+
+    _ccsv = cdf.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇ ammo_compare.csv İndir", _ccsv, "ammo_compare.csv", "text/csv")
+
+    # ── 3D Atış Simülasyonu ───────────────────────────────────────────────────
+    st.divider()
+    st.markdown('<div class="section-header">3D Atış Simülasyonu</div>',
+                unsafe_allow_html=True)
+
+    if cpar:
+        _csel = st.selectbox(
+            "Mühimmat Seçin", list(cdf["Mühimmat"]), key="comp3d_ammo_sel",
+        )
+        _cc1, _cc2 = st.columns(2)
+        with _cc1:
+            _use_lead_c     = st.checkbox("Lead uygulanmış atış",           value=True,  key="comp3d_lead")
+        with _cc2:
+            _use_req_elev_c = st.checkbox("Required elevation ile göster",  value=False, key="comp3d_req")
+
+        _scale_lbl_c = st.radio(
+            "Ölçek Modu", ["Görsel Ölçek", "Gerçek Ölçek"],
+            index=0, horizontal=True, key="comp3d_scale",
+        )
+        _scale_mode_c = "visual" if _scale_lbl_c == "Görsel Ölçek" else "real"
+
+        if st.button("🎯 3D Animasyon Oluştur", key="comp3d_btn"):
+            with st.spinner("3D simülasyon hesaplanıyor…"):
+                _ca    = AMMO_DB[_csel]
+                _crow  = cdf[cdf["Mühimmat"] == _csel].iloc[0]
+                _req_e = float(_crow["Required Elevation (°)"])
+                _drp   = float(_crow["Drop (m)"])
+                _wdr   = float(_crow["Wind Drift (m)"])
+                _tgt_ms = cpar.get("target_speed_kmh", 100.0) / 3.6
+
+                _sim_tlt = _req_e if _use_req_elev_c else float(cpar["tilt_deg"])
+                _ent_tlt = float(cpar["tilt_deg"])
+
+                # Pass 1 — straight shot → TOF → lead
+                _ctraj0 = simulate_trajectory_points(
+                    cpar["distance_m"], _sim_tlt,
+                    cpar["temp_c"], cpar["pressure_hpa"],
+                    cpar["wind_x"], cpar["wind_z"],
+                    _ca["mass_g"], _ca["diam_mm"],
+                    _ca["muzzle_ms"], _ca["cd"],
+                    use_mach_table=cpar["use_mach_table"],
+                    aim_z_m=0.0,
+                )
+                _lead_c = _tgt_ms * _ctraj0["tof"]
+
+                # Pass 2 — with yaw if lead checkbox enabled
+                _aim_z_c = _lead_c if _use_lead_c else 0.0
+                _ctraj   = simulate_trajectory_points(
+                    cpar["distance_m"], _sim_tlt,
+                    cpar["temp_c"], cpar["pressure_hpa"],
+                    cpar["wind_x"], cpar["wind_z"],
+                    _ca["mass_g"], _ca["diam_mm"],
+                    _ca["muzzle_ms"], _ca["cd"],
+                    use_mach_table=cpar["use_mach_table"],
+                    aim_z_m=_aim_z_c,
+                )
+                _fig3d_c = make_3d_animation(
+                    traj=_ctraj,
+                    tof=_ctraj["tof"],
+                    impact_y=_ctraj["impact_y"],
+                    impact_z=_ctraj["impact_z"],
+                    lead_m=_lead_c,
+                    distance_m=cpar["distance_m"],
+                    target_speed_ms=_tgt_ms,
+                    wind_x=cpar["wind_x"],
+                    wind_z=cpar["wind_z"],
+                    required_elev=_req_e,
+                    drop=_drp,
+                    wind_drift=_wdr,
+                    ammo_name=_csel,
+                    speed_kmh=int(cpar.get("target_speed_kmh", 100)),
+                    tilt_deg=_sim_tlt,
+                    entered_tilt_deg=_ent_tlt,
+                    scale_mode=_scale_mode_c,
+                )
+                st.session_state["compare_3d_fig"] = _fig3d_c
+
+        _fig3d_c = st.session_state.get("compare_3d_fig")
+        if _fig3d_c is not None:
+            st.plotly_chart(_fig3d_c, use_container_width=True)
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")

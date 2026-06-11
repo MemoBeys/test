@@ -331,9 +331,15 @@ def simulate_trajectory_points(
         cd_base:        float,
         dt:             float = 0.001,
         use_mach_table: bool  = False,
+        aim_z_m:        float = 0.0,
 ) -> dict:
     """
     Same RK4 physics as simulate_3d but collects every step.
+    aim_z_m: lateral lead distance — adds yaw angle so v0z points toward lead.
+      yaw_rad = atan2(aim_z_m, distance_m)
+      v0x = V * cos(tilt) * cos(yaw)
+      v0y = V * sin(tilt)
+      v0z = V * cos(tilt) * sin(yaw)
     Returns {"t", "x", "y", "z", "tof", "impact_y", "impact_z"}.
     """
     rho, c = atmosphere(temp_c, pressure_hpa)
@@ -344,9 +350,17 @@ def simulate_trajectory_points(
               cd_base=cd_base, area=area, mass=mass,
               use_mach_table=use_mach_table)
 
-    v0x   = muzzle_vel_ms * np.cos(np.radians(tilt_deg))
-    v0y   = muzzle_vel_ms * np.sin(np.radians(tilt_deg))
-    state = np.array([0.0, 0.0, 0.0, v0x, v0y, 0.0])
+    _elev = np.radians(tilt_deg)
+    if abs(aim_z_m) > 1e-9:
+        _yaw = np.arctan2(aim_z_m, distance_m)
+        v0x  = muzzle_vel_ms * np.cos(_elev) * np.cos(_yaw)
+        v0y  = muzzle_vel_ms * np.sin(_elev)
+        v0z  = muzzle_vel_ms * np.cos(_elev) * np.sin(_yaw)
+    else:
+        v0x = muzzle_vel_ms * np.cos(_elev)
+        v0y = muzzle_vel_ms * np.sin(_elev)
+        v0z = 0.0
+    state = np.array([0.0, 0.0, 0.0, v0x, v0y, v0z])
 
     t_list = [0.0]; x_list = [0.0]; y_list = [0.0]; z_list = [0.0]
     t = 0.0
@@ -728,49 +742,68 @@ def make_3d_animation(
         distance_m, target_speed_ms, wind_x, wind_z,
         required_elev, drop, wind_drift,
         ammo_name, speed_kmh, tilt_deg,
+        entered_tilt_deg=None,
 ) -> go.Figure:
     """
-    Animated Plotly 3D figure:
-    - Axes: X = downrange, Y = lateral (Z in physics), Z = vertical (Y in physics)
-    - Bullet path, target crossing path, lead point, impact point, ~80 frames.
+    Animated Plotly 3D figure.
+    Coordinate mapping to Plotly (X, Y, Z):
+      X = downrange (physics x)
+      Y = lateral   (physics z)
+      Z = vertical  (physics y)
+
+    Target model: starts at [distance_m, 0, 0], crosses to [distance_m, lead_m, 0].
+    tilt_deg        : actual simulation elevation (may be required_elev)
+    entered_tilt_deg: original user-entered elevation (for annotation)
     """
+    if entered_tilt_deg is None:
+        entered_tilt_deg = tilt_deg
+
     t_arr = np.array(traj["t"])
     x_arr = np.array(traj["x"])
-    y_arr = np.array(traj["y"])   # vertical in physics
-    z_arr = np.array(traj["z"])   # lateral in physics
+    y_arr = np.array(traj["y"])   # physics vertical  → Plotly Z
+    z_arr = np.array(traj["z"])   # physics lateral   → Plotly Y
     n = len(t_arr)
-
-    # Target crosses perpendicular: x fixed at distance_m, lateral = speed*t, vertical = 0
-    tgt_z_impact = target_speed_ms * tof
 
     step = max(1, n // 80)
     frame_idx = list(range(0, n, step))
     if frame_idx[-1] != n - 1:
         frame_idx.append(n - 1)
 
+    # ── Static traces ─────────────────────────────────────────────────────────
     ghost_bullet = go.Scatter3d(
         x=x_arr, y=z_arr, z=y_arr, mode="lines",
-        line=dict(color="#58a6ff", width=2, dash="dash"), opacity=0.3,
+        line=dict(color="#58a6ff", width=2, dash="dash"), opacity=0.35,
         name="Mermi Yolu",
     )
+    # Target: straight crossing line from z=0 to z=lead_m at x=distance_m
     ghost_target = go.Scatter3d(
-        x=np.full(n, distance_m), y=target_speed_ms * t_arr, z=np.zeros(n),
-        mode="lines",
-        line=dict(color="#f78166", width=2, dash="dash"), opacity=0.3,
+        x=[distance_m, distance_m], y=[0.0, lead_m], z=[0.0, 0.0],
+        mode="lines+markers",
+        line=dict(color="#f78166", width=2, dash="dash"), opacity=0.35,
+        marker=dict(color="#f78166", size=4),
         name="Hedef Yolu",
     )
+    # Lead point: where target will be at bullet arrival
     lead_pt = go.Scatter3d(
-        x=[distance_m], y=[tgt_z_impact], z=[0.0], mode="markers",
-        marker=dict(symbol="diamond", color="#e3b341", size=9),
-        name="Lead Noktası",
+        x=[distance_m], y=[lead_m], z=[0.0], mode="markers",
+        marker=dict(symbol="diamond", color="#e3b341", size=10),
+        name=f"Lead ({lead_m:.2f} m)",
     )
+    # Impact point: where bullet actually arrives
     impact_pt = go.Scatter3d(
         x=[distance_m], y=[impact_z], z=[impact_y], mode="markers",
-        marker=dict(symbol="x", color="#ff7b72", size=9),
-        name="İmpact Noktası",
+        marker=dict(symbol="x", color="#ff7b72", size=10),
+        name=f"İmpact Y={impact_y:.2f} m  Z={impact_z:.2f} m",
+    )
+    # Vertical miss line (from impact z,0 to impact z,impact_y) — shows vertical error
+    vmiss = go.Scatter3d(
+        x=[distance_m, distance_m], y=[impact_z, impact_z], z=[0.0, impact_y],
+        mode="lines",
+        line=dict(color="#ff7b72", width=2, dash="dot"),
+        name=f"Vertical Miss {impact_y:.2f} m",
     )
 
-    # Animated traces (indices 4 & 5 — matched in frames)
+    # Animated bullet marker (trace index 5) and target marker (trace index 6)
     anim_bullet = go.Scatter3d(
         x=[x_arr[0]], y=[z_arr[0]], z=[y_arr[0]], mode="markers+lines",
         marker=dict(color="#58a6ff", size=7),
@@ -798,9 +831,11 @@ def make_3d_animation(
             name="Rüzgar",
         ))
 
+    # ── Animation frames (update traces 5 & 6) ───────────────────────────────
     frames = []
     for fi in frame_idx:
         tb = max(0, fi - 20)
+        tgt_y_cur = target_speed_ms * t_arr[tb:fi+1]  # lateral position of target
         frames.append(go.Frame(
             data=[
                 go.Scatter3d(
@@ -811,30 +846,34 @@ def make_3d_animation(
                 ),
                 go.Scatter3d(
                     x=np.full(fi - tb + 1, distance_m),
-                    y=target_speed_ms * t_arr[tb:fi+1],
+                    y=tgt_y_cur,
                     z=np.zeros(fi - tb + 1),
                     mode="markers+lines",
                     marker=dict(color="#f78166", size=5),
                     line=dict(color="#f78166", width=3),
                 ),
             ],
-            traces=[4, 5],
+            traces=[5, 6],
             name=str(fi),
         ))
 
     ann_text = (
-        f"Hedef Hızı: {speed_kmh} km/h  |  TOF: {tof:.4f} s<br>"
-        f"Lead: {lead_m:.3f} m  |  Drop: {drop:.3f} m<br>"
-        f"Wind Drift: {wind_drift:.3f} m  |  Impact Y: {impact_y:.3f} m  |  Impact Z: {impact_z:.3f} m<br>"
-        f"Gerekli Elevasyon: {required_elev:.4f}°  |  Tilt: {tilt_deg:.4f}°"
+        f"Girilen Tilt: {entered_tilt_deg:.4f}°  |  Required Elevation: {required_elev:.4f}°<br>"
+        f"Vertical Miss (Impact Y): {impact_y:.3f} m  |  TOF: {tof:.4f} s<br>"
+        f"Lead = Hedef Hızı × TOF: {lead_m:.3f} m  |  Lateral Aim Z: {lead_m:.3f} m<br>"
+        f"Wind Drift: {wind_drift:.3f} m  |  Hedef Hızı: {speed_kmh} km/h"
     )
 
+    static_traces = [ghost_bullet, ghost_target, lead_pt, impact_pt, vmiss,
+                     anim_bullet, anim_target] + extra
+
     fig = go.Figure(
-        data=[ghost_bullet, ghost_target, lead_pt, impact_pt, anim_bullet, anim_target] + extra,
+        data=static_traces,
         frames=frames,
         layout=go.Layout(
             title=dict(
-                text=f"3D Atış Simülasyonu — {ammo_name} — {speed_kmh} km/h — {tilt_deg:.2f}°",
+                text=(f"3D Atış Simülasyonu — {ammo_name} — {speed_kmh} km/h "
+                      f"— Tilt {entered_tilt_deg:.2f}°"),
                 font=dict(color="#58a6ff", size=14),
             ),
             paper_bgcolor="#0d1117",
@@ -873,7 +912,7 @@ def make_3d_animation(
                     label=str(i), method="animate",
                 ) for i, f in enumerate(frames)],
             )],
-            height=620,
+            height=640,
             margin=dict(l=0, r=0, t=60, b=80),
         ),
     )
@@ -1379,24 +1418,51 @@ if mode == "Tek Tilt":
 
     _sp = st.session_state.get("sim_params")
     if _sp:
-        _sim3d_speed_s = st.number_input(
-            "Hedef Hızı (km/h)", value=100, min_value=1, max_value=500, step=1,
-            key="sim3d_speed_single",
-        )
+        _sc1, _sc2, _sc3 = st.columns(3)
+        with _sc1:
+            _sim3d_speed_s = st.number_input(
+                "Hedef Hızı (km/h)", value=100, min_value=1, max_value=500, step=1,
+                key="sim3d_speed_single",
+            )
+        with _sc2:
+            _use_lead_s    = st.checkbox("Lead uygulanmış atış",       value=True,  key="sim3d_lead_s")
+        with _sc3:
+            _use_req_elev_s = st.checkbox("Required elevation ile göster", value=False, key="sim3d_req_s")
+
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_single"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
-                _traj = simulate_trajectory_points(
-                    _sp["distance_m"], _sp["tilt_deg"],
+                _row0    = df.iloc[0]
+                _req_e   = float(_row0["Required Elevation (°)"])
+                _drp     = float(_row0["Drop (m)"])
+                _wdr     = float(_row0["Wind Drift (m)"])
+                _ent_tlt = _sp["tilt_deg"]
+                _sim_tlt = _req_e if _use_req_elev_s else _ent_tlt
+                _tgt_ms  = _sim3d_speed_s / 3.6
+
+                # Pass 1 — straight shot (aim_z=0) to get TOF → compute lead
+                _traj0 = simulate_trajectory_points(
+                    _sp["distance_m"], _sim_tlt,
                     _sp["temp_c"], _sp["pressure_hpa"],
                     _sp["wind_x"], _sp["wind_z"],
                     _sp["bullet_mass_g"], _sp["bullet_diam_mm"],
                     _sp["muzzle_vel_ms"], _sp["cd_base"],
                     use_mach_table=_sp["use_mach_table"],
+                    aim_z_m=0.0,
                 )
-                _tgt_ms = _sim3d_speed_s / 3.6
-                _lead_s = _tgt_ms * _traj["tof"]
-                _row0   = df.iloc[0]
-                _fig3d  = make_3d_animation(
+                _lead_s = _tgt_ms * _traj0["tof"]
+
+                # Pass 2 — with yaw toward lead if checkbox enabled
+                _aim_z = _lead_s if _use_lead_s else 0.0
+                _traj  = simulate_trajectory_points(
+                    _sp["distance_m"], _sim_tlt,
+                    _sp["temp_c"], _sp["pressure_hpa"],
+                    _sp["wind_x"], _sp["wind_z"],
+                    _sp["bullet_mass_g"], _sp["bullet_diam_mm"],
+                    _sp["muzzle_vel_ms"], _sp["cd_base"],
+                    use_mach_table=_sp["use_mach_table"],
+                    aim_z_m=_aim_z,
+                )
+                _fig3d = make_3d_animation(
                     traj=_traj,
                     tof=_traj["tof"],
                     impact_y=_traj["impact_y"],
@@ -1406,12 +1472,13 @@ if mode == "Tek Tilt":
                     target_speed_ms=_tgt_ms,
                     wind_x=_sp["wind_x"],
                     wind_z=_sp["wind_z"],
-                    required_elev=float(_row0["Required Elevation (°)"]),
-                    drop=float(_row0["Drop (m)"]),
-                    wind_drift=float(_row0["Wind Drift (m)"]),
+                    required_elev=_req_e,
+                    drop=_drp,
+                    wind_drift=_wdr,
                     ammo_name=ammo_snap.get("name", "—"),
                     speed_kmh=_sim3d_speed_s,
-                    tilt_deg=_sp["tilt_deg"],
+                    tilt_deg=_sim_tlt,
+                    entered_tilt_deg=_ent_tlt,
                 )
                 st.session_state["sim3d_fig_single"] = _fig3d
 
@@ -1537,28 +1604,28 @@ else:
 
     _sp = st.session_state.get("sim_params")
     if _sp:
-        _unique_tilts  = sorted(df["Tilt (°)"].unique().tolist())
-        _tilt_labels   = [f"{t:.4f}°" for t in _unique_tilts]
-        _sel_tilt_lbl  = st.selectbox("Tilt Seçin", _tilt_labels, key="sim3d_tilt_range")
-        _sel_tilt_val  = _unique_tilts[_tilt_labels.index(_sel_tilt_lbl)]
+        _unique_tilts = sorted(df["Tilt (°)"].unique().tolist())
+        _tilt_labels  = [f"{t:.4f}°" for t in _unique_tilts]
 
-        _sim3d_speed_r = st.number_input(
-            "Hedef Hızı (km/h)", value=100, min_value=1, max_value=500, step=1,
-            key="sim3d_speed_range",
-        )
+        _rc1, _rc2 = st.columns(2)
+        with _rc1:
+            _sel_tilt_lbl = st.selectbox("Tilt Seçin", _tilt_labels, key="sim3d_tilt_range")
+        with _rc2:
+            _sim3d_speed_r = st.number_input(
+                "Hedef Hızı (km/h)", value=100, min_value=1, max_value=500, step=1,
+                key="sim3d_speed_range",
+            )
+        _sel_tilt_val = _unique_tilts[_tilt_labels.index(_sel_tilt_lbl)]
+
+        _rc3, _rc4 = st.columns(2)
+        with _rc3:
+            _use_lead_r     = st.checkbox("Lead uygulanmış atış",           value=True,  key="sim3d_lead_r")
+        with _rc4:
+            _use_req_elev_r = st.checkbox("Required elevation ile göster",  value=False, key="sim3d_req_r")
+
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_range"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
-                _traj = simulate_trajectory_points(
-                    _sp["distance_m"], _sel_tilt_val,
-                    _sp["temp_c"], _sp["pressure_hpa"],
-                    _sp["wind_x"], _sp["wind_z"],
-                    _sp["bullet_mass_g"], _sp["bullet_diam_mm"],
-                    _sp["muzzle_vel_ms"], _sp["cd_base"],
-                    use_mach_table=_sp["use_mach_table"],
-                )
-                _tgt_ms = _sim3d_speed_r / 3.6
-                _lead_r = _tgt_ms * _traj["tof"]
-                _trows  = df[
+                _trows = df[
                     (df["Tilt (°)"] == _sel_tilt_val) &
                     (df["Hedef Hızı (km/h)"] == _sim3d_speed_r)
                 ]
@@ -1568,6 +1635,34 @@ else:
                     _wdr   = float(_trows.iloc[0]["Wind Drift (m)"])
                 else:
                     _req_e = 0.0; _drp = 0.0; _wdr = 0.0
+
+                _ent_tlt = _sel_tilt_val
+                _sim_tlt = _req_e if _use_req_elev_r else _ent_tlt
+                _tgt_ms  = _sim3d_speed_r / 3.6
+
+                # Pass 1 — straight shot to get TOF → compute lead
+                _traj0 = simulate_trajectory_points(
+                    _sp["distance_m"], _sim_tlt,
+                    _sp["temp_c"], _sp["pressure_hpa"],
+                    _sp["wind_x"], _sp["wind_z"],
+                    _sp["bullet_mass_g"], _sp["bullet_diam_mm"],
+                    _sp["muzzle_vel_ms"], _sp["cd_base"],
+                    use_mach_table=_sp["use_mach_table"],
+                    aim_z_m=0.0,
+                )
+                _lead_r = _tgt_ms * _traj0["tof"]
+
+                # Pass 2 — with yaw if lead checkbox enabled
+                _aim_z = _lead_r if _use_lead_r else 0.0
+                _traj  = simulate_trajectory_points(
+                    _sp["distance_m"], _sim_tlt,
+                    _sp["temp_c"], _sp["pressure_hpa"],
+                    _sp["wind_x"], _sp["wind_z"],
+                    _sp["bullet_mass_g"], _sp["bullet_diam_mm"],
+                    _sp["muzzle_vel_ms"], _sp["cd_base"],
+                    use_mach_table=_sp["use_mach_table"],
+                    aim_z_m=_aim_z,
+                )
                 _fig3d = make_3d_animation(
                     traj=_traj,
                     tof=_traj["tof"],
@@ -1583,7 +1678,8 @@ else:
                     wind_drift=_wdr,
                     ammo_name=ammo_snap.get("name", "—"),
                     speed_kmh=_sim3d_speed_r,
-                    tilt_deg=_sel_tilt_val,
+                    tilt_deg=_sim_tlt,
+                    entered_tilt_deg=_ent_tlt,
                 )
                 st.session_state["sim3d_fig_range"] = _fig3d
 

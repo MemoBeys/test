@@ -746,14 +746,16 @@ def make_3d_animation(
 ) -> go.Figure:
     """
     Animated Plotly 3D figure.
-    Coordinate mapping to Plotly (X, Y, Z):
+    Coordinate mapping to Plotly axes:
       X = downrange (physics x)
       Y = lateral   (physics z)
       Z = vertical  (physics y)
 
-    Target model: starts at [distance_m, 0, 0], crosses to [distance_m, lead_m, 0].
-    tilt_deg        : actual simulation elevation (may be required_elev)
-    entered_tilt_deg: original user-entered elevation (for annotation)
+    aspect ratio — manual, derived from actual data extents so
+    1 m is displayed as 1 m on every axis.
+
+    camera — uirevision="keep-camera" prevents Play/Pause/slider
+    from resetting the user's chosen viewpoint.
     """
     if entered_tilt_deg is None:
         entered_tilt_deg = tilt_deg
@@ -763,6 +765,14 @@ def make_3d_animation(
     y_arr = np.array(traj["y"])   # physics vertical  → Plotly Z
     z_arr = np.array(traj["z"])   # physics lateral   → Plotly Y
     n = len(t_arr)
+
+    # ── Physical aspect ratio ─────────────────────────────────────────────────
+    # Normalise so the longest axis = 1.0 and shorter axes shrink proportionally.
+    _ax = distance_m
+    _ay = max(abs(lead_m),    5.0)   # lateral (Plotly Y)
+    _az = max(abs(impact_y),  2.0)   # vertical (Plotly Z)
+    _scale = max(_ax, _ay, _az, 10.0)
+    _ar = dict(x=_ax / _scale, y=_ay / _scale, z=_az / _scale)
 
     step = max(1, n // 80)
     frame_idx = list(range(0, n, step))
@@ -775,7 +785,6 @@ def make_3d_animation(
         line=dict(color="#58a6ff", width=2, dash="dash"), opacity=0.35,
         name="Mermi Yolu",
     )
-    # Target: straight crossing line from z=0 to z=lead_m at x=distance_m
     ghost_target = go.Scatter3d(
         x=[distance_m, distance_m], y=[0.0, lead_m], z=[0.0, 0.0],
         mode="lines+markers",
@@ -783,27 +792,23 @@ def make_3d_animation(
         marker=dict(color="#f78166", size=4),
         name="Hedef Yolu",
     )
-    # Lead point: where target will be at bullet arrival
     lead_pt = go.Scatter3d(
         x=[distance_m], y=[lead_m], z=[0.0], mode="markers",
         marker=dict(symbol="diamond", color="#e3b341", size=10),
         name=f"Lead ({lead_m:.2f} m)",
     )
-    # Impact point: where bullet actually arrives
     impact_pt = go.Scatter3d(
         x=[distance_m], y=[impact_z], z=[impact_y], mode="markers",
         marker=dict(symbol="x", color="#ff7b72", size=10),
         name=f"İmpact Y={impact_y:.2f} m  Z={impact_z:.2f} m",
     )
-    # Vertical miss line (from impact z,0 to impact z,impact_y) — shows vertical error
     vmiss = go.Scatter3d(
         x=[distance_m, distance_m], y=[impact_z, impact_z], z=[0.0, impact_y],
         mode="lines",
         line=dict(color="#ff7b72", width=2, dash="dot"),
         name=f"Vertical Miss {impact_y:.2f} m",
     )
-
-    # Animated bullet marker (trace index 5) and target marker (trace index 6)
+    # Animated traces — indices 5 & 6 (matched in every frame)
     anim_bullet = go.Scatter3d(
         x=[x_arr[0]], y=[z_arr[0]], z=[y_arr[0]], mode="markers+lines",
         marker=dict(color="#58a6ff", size=7),
@@ -818,7 +823,7 @@ def make_3d_animation(
     extra = []
     if abs(wind_x) > 0.01 or abs(wind_z) > 0.01:
         wmag = np.sqrt(wind_x**2 + wind_z**2)
-        wlen = min(distance_m * 0.15, 60.0)
+        wlen = min(distance_m * 0.12, 50.0)
         mx   = distance_m / 2
         extra.append(go.Scatter3d(
             x=[mx, mx + wind_x / wmag * wlen],
@@ -831,11 +836,11 @@ def make_3d_animation(
             name="Rüzgar",
         ))
 
-    # ── Animation frames (update traces 5 & 6) ───────────────────────────────
+    # ── Animation frames — only data, NO layout/camera keys ──────────────────
+    # Omitting layout keys in frames is what keeps the user's camera intact.
     frames = []
     for fi in frame_idx:
         tb = max(0, fi - 20)
-        tgt_y_cur = target_speed_ms * t_arr[tb:fi+1]  # lateral position of target
         frames.append(go.Frame(
             data=[
                 go.Scatter3d(
@@ -846,7 +851,7 @@ def make_3d_animation(
                 ),
                 go.Scatter3d(
                     x=np.full(fi - tb + 1, distance_m),
-                    y=tgt_y_cur,
+                    y=target_speed_ms * t_arr[tb:fi+1],
                     z=np.zeros(fi - tb + 1),
                     mode="markers+lines",
                     marker=dict(color="#f78166", size=5),
@@ -867,10 +872,57 @@ def make_3d_animation(
     static_traces = [ghost_bullet, ghost_target, lead_pt, impact_pt, vmiss,
                      anim_bullet, anim_target] + extra
 
+    # ── Camera presets (relayout — never reset user's current view) ───────────
+    _cam_iso  = dict(eye=dict(x=1.5,   y=1.5,   z=0.8))
+    _cam_top  = dict(eye=dict(x=0.01,  y=0.01,  z=2.5))
+    _cam_side = dict(eye=dict(x=0.01,  y=-2.5,  z=0.4))
+    _cam_rear = dict(eye=dict(x=-2.5,  y=0.01,  z=0.4))
+    _cam_traj = dict(eye=dict(x=-2.0,  y=0.8,   z=0.5))   # behind shooter
+
+    cam_menu = dict(
+        type="buttons", showactive=False,
+        direction="right",
+        x=0.0, xanchor="left",
+        y=1.08, yanchor="top",
+        bgcolor="#161b22", bordercolor="#30363d",
+        font=dict(color="#e6edf3", size=11),
+        buttons=[
+            dict(label="İzometrik",        method="relayout",
+                 args=[{"scene.camera": _cam_iso}]),
+            dict(label="Üstten",           method="relayout",
+                 args=[{"scene.camera": _cam_top}]),
+            dict(label="Yandan",           method="relayout",
+                 args=[{"scene.camera": _cam_side}]),
+            dict(label="Arkadan",          method="relayout",
+                 args=[{"scene.camera": _cam_rear}]),
+            dict(label="Mermiyi Takip Et", method="relayout",
+                 args=[{"scene.camera": _cam_traj}]),
+        ],
+    )
+
+    play_menu = dict(
+        type="buttons", showactive=False,
+        y=0, x=0.5, xanchor="center",
+        bgcolor="#161b22", bordercolor="#30363d",
+        font=dict(color="#e6edf3", size=12),
+        buttons=[
+            dict(label="▶ Play", method="animate",
+                 args=[None, {"frame": {"duration": 30, "redraw": True},
+                              "fromcurrent": True, "transition": {"duration": 0}}]),
+            dict(label="⏸ Pause", method="animate",
+                 args=[[None], {"frame": {"duration": 0, "redraw": False},
+                                "mode": "immediate", "transition": {"duration": 0}}]),
+        ],
+    )
+
     fig = go.Figure(
         data=static_traces,
         frames=frames,
         layout=go.Layout(
+            # uirevision keeps user's camera / zoom / pan across Plotly.react() calls.
+            # Any constant string works — as long as it doesn't change between renders
+            # the camera state is preserved when animation frames are applied.
+            uirevision="keep-camera",
             title=dict(
                 text=(f"3D Atış Simülasyonu — {ammo_name} — {speed_kmh} km/h "
                       f"— Tilt {entered_tilt_deg:.2f}°"),
@@ -880,40 +932,37 @@ def make_3d_animation(
             plot_bgcolor="#0d1117",
             scene=dict(
                 bgcolor="#0d1117",
-                xaxis=dict(title="X — Downrange (m)", color="#8b949e", gridcolor="#30363d"),
-                yaxis=dict(title="Z — Lateral (m)",   color="#8b949e", gridcolor="#30363d"),
-                zaxis=dict(title="Y — Vertical (m)",  color="#8b949e", gridcolor="#30363d"),
+                aspectmode="manual",
+                aspectratio=_ar,
+                camera=_cam_iso,   # initial view only — uirevision preserves it after that
+                xaxis=dict(title="X — Downrange (m)", color="#8b949e",
+                           gridcolor="#30363d", zerolinecolor="#30363d"),
+                yaxis=dict(title="Z — Lateral (m)",   color="#8b949e",
+                           gridcolor="#30363d", zerolinecolor="#30363d"),
+                zaxis=dict(title="Y — Vertical (m)",  color="#8b949e",
+                           gridcolor="#30363d", zerolinecolor="#30363d"),
             ),
-            legend=dict(font=dict(color="#e6edf3"), bgcolor="#161b22", bordercolor="#30363d"),
+            legend=dict(font=dict(color="#e6edf3"), bgcolor="#161b22",
+                        bordercolor="#30363d"),
             annotations=[dict(
                 text=ann_text, align="left", showarrow=False,
                 xref="paper", yref="paper", x=0.01, y=0.98,
                 bgcolor="#161b22", bordercolor="#30363d", borderwidth=1,
                 font=dict(color="#8b949e", size=11),
             )],
-            updatemenus=[dict(
-                type="buttons", showactive=False,
-                y=0, x=0.5, xanchor="center",
-                buttons=[
-                    dict(label="▶ Play", method="animate",
-                         args=[None, {"frame": {"duration": 30, "redraw": True},
-                                      "fromcurrent": True, "transition": {"duration": 0}}]),
-                    dict(label="⏸ Pause", method="animate",
-                         args=[[None], {"frame": {"duration": 0, "redraw": False},
-                                        "mode": "immediate", "transition": {"duration": 0}}]),
-                ],
-            )],
+            updatemenus=[cam_menu, play_menu],
             sliders=[dict(
                 active=0,
                 currentvalue={"prefix": "Frame: "},
                 pad={"t": 50},
                 steps=[dict(
-                    args=[[f.name], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+                    args=[[f.name],
+                          {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
                     label=str(i), method="animate",
                 ) for i, f in enumerate(frames)],
             )],
-            height=640,
-            margin=dict(l=0, r=0, t=60, b=80),
+            height=660,
+            margin=dict(l=0, r=0, t=80, b=80),
         ),
     )
     return fig

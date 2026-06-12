@@ -1039,8 +1039,16 @@ def make_3d_animation(
                 zaxis=dict(title="Y — Vertical (m)",  color="#8b949e",
                            gridcolor="#30363d", zerolinecolor="#30363d"),
             ),
-            legend=dict(font=dict(color="#e6edf3"), bgcolor="#161b22",
-                        bordercolor="#30363d"),
+            legend=dict(
+                font=dict(color="#e6edf3"),
+                bgcolor="#161b22",
+                bordercolor="#30363d",
+                borderwidth=1,
+                x=0.01,
+                y=0.68,
+                xanchor="left",
+                yanchor="top",
+            ),
             annotations=[dict(
                 text=ann_text, align="left", showarrow=False,
                 xref="paper", yref="paper", x=0.01, y=0.98,

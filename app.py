@@ -1044,9 +1044,10 @@ def make_3d_animation(
                 bgcolor="#161b22",
                 bordercolor="#30363d",
                 borderwidth=1,
-                x=0.01,
-                y=0.68,
-                xanchor="left",
+                orientation="h",
+                x=0.5,
+                y=-0.12,
+                xanchor="center",
                 yanchor="top",
             ),
             annotations=[dict(
@@ -1067,7 +1068,7 @@ def make_3d_animation(
                 ) for i, f in enumerate(frames)],
             )],
             height=660,
-            margin=dict(l=0, r=0, t=80, b=80),
+            margin=dict(l=0, r=0, t=80, b=180),
         ),
     )
     return fig

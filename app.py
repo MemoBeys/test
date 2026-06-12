@@ -963,7 +963,13 @@ def make_3d_animation(
         f"Vertical Miss (Impact Y): {impact_y:.3f} m  |  TOF: {tof:.4f} s<br>"
         f"Lead = Hedef Hızı × TOF: {lead_m:.3f} m  |  Lateral Aim Z: {lead_m:.3f} m<br>"
         f"Wind Drift: {wind_drift:.3f} m  |  Hedef Hızı: {speed_kmh} km/h<br>"
-        f"<i>{_mode_note}</i>"
+        f"<i>{_mode_note}</i><br>"
+        f"<span style='color:#58a6ff'>— Mermi Yolu</span>  "
+        f"<span style='color:#f78166'>— Hedef Yolu</span>  "
+        f"<span style='color:#e3b341'>◆ Lead</span>  "
+        f"<span style='color:#ff7b72'>✕ İmpact</span>  "
+        f"<span style='color:#58a6ff'>● Mermi</span>  "
+        f"<span style='color:#f78166'>● Hedef</span>"
     )
 
     static_traces = [ghost_bullet, ghost_target, lead_pt, impact_pt, vmiss,
@@ -1039,17 +1045,7 @@ def make_3d_animation(
                 zaxis=dict(title="Y — Vertical (m)",  color="#8b949e",
                            gridcolor="#30363d", zerolinecolor="#30363d"),
             ),
-            legend=dict(
-                font=dict(color="#e6edf3"),
-                bgcolor="#161b22",
-                bordercolor="#30363d",
-                borderwidth=1,
-                orientation="h",
-                x=0.5,
-                y=-0.12,
-                xanchor="center",
-                yanchor="top",
-            ),
+            showlegend=False,
             annotations=[dict(
                 text=ann_text, align="left", showarrow=False,
                 xref="paper", yref="paper", x=0.01, y=0.98,
@@ -1068,7 +1064,7 @@ def make_3d_animation(
                 ) for i, f in enumerate(frames)],
             )],
             height=660,
-            margin=dict(l=0, r=0, t=80, b=180),
+            margin=dict(l=0, r=0, t=80, b=80),
         ),
     )
     return fig

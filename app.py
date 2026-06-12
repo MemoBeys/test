@@ -7,13 +7,13 @@ import base64
 from io import BytesIO
 from datetime import datetime
 import streamlit as st
-import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from PIL import Image
 import plotly.graph_objects as go
+import streamlit.components.v1 as components
 
 _logo     = Image.open("logo.png")
 _logo_b64 = base64.b64encode(open("logo.png", "rb").read()).decode()
@@ -826,7 +826,6 @@ def make_3d_animation(
         ammo_name, speed_kmh, tilt_deg,
         entered_tilt_deg=None,
         scale_mode: str = "visual",
-        mobile_mode: bool = False,
 ) -> go.Figure:
     """
     Animated Plotly 3D figure.
@@ -978,14 +977,12 @@ def make_3d_animation(
     _cam_traj = dict(eye=dict(x=-2.0,  y=0.8,   z=0.5))   # behind shooter
 
     cam_menu = dict(
-        type="dropdown" if mobile_mode else "buttons",
-        showactive=False,
-        direction="down" if mobile_mode else "right",
+        type="buttons", showactive=False,
+        direction="right",
         x=0.0, xanchor="left",
-        y=1.06 if mobile_mode else 1.08,
-        yanchor="top",
+        y=1.08, yanchor="top",
         bgcolor="#161b22", bordercolor="#30363d",
-        font=dict(color="#e6edf3", size=9 if mobile_mode else 11),
+        font=dict(color="#e6edf3", size=11),
         buttons=[
             dict(label="İzometrik",        method="relayout",
                  args=[{"scene.camera": _cam_iso}]),
@@ -1004,7 +1001,7 @@ def make_3d_animation(
         type="buttons", showactive=False,
         y=0, x=0.5, xanchor="center",
         bgcolor="#161b22", bordercolor="#30363d",
-        font=dict(color="#e6edf3", size=10 if mobile_mode else 12),
+        font=dict(color="#e6edf3", size=12),
         buttons=[
             dict(label="▶ Play", method="animate",
                  args=[None, {"frame": {"duration": 30, "redraw": True},
@@ -1024,10 +1021,8 @@ def make_3d_animation(
             # the camera state is preserved when animation frames are applied.
             uirevision="keep-camera",
             title=dict(
-                text="" if mobile_mode else (
-                    f"3D Atış Simülasyonu — {ammo_name} — {speed_kmh} km/h "
-                    f"— Tilt {entered_tilt_deg:.2f}°"
-                ),
+                text=(f"3D Atış Simülasyonu — {ammo_name} — {speed_kmh} km/h "
+                      f"— Tilt {entered_tilt_deg:.2f}°"),
                 font=dict(color="#58a6ff", size=14),
             ),
             paper_bgcolor="#0d1117",
@@ -1046,14 +1041,13 @@ def make_3d_animation(
             ),
             legend=dict(font=dict(color="#e6edf3"), bgcolor="#161b22",
                         bordercolor="#30363d"),
-            showlegend=not mobile_mode,
-            annotations=[] if mobile_mode else [dict(
+            annotations=[dict(
                 text=ann_text, align="left", showarrow=False,
                 xref="paper", yref="paper", x=0.01, y=0.98,
                 bgcolor="#161b22", bordercolor="#30363d", borderwidth=1,
                 font=dict(color="#8b949e", size=11),
             )],
-            updatemenus=[play_menu] if mobile_mode else [cam_menu, play_menu],
+            updatemenus=[cam_menu, play_menu],
             sliders=[dict(
                 active=0,
                 currentvalue={"prefix": "Frame: "},
@@ -1064,8 +1058,8 @@ def make_3d_animation(
                     label=str(i), method="animate",
                 ) for i, f in enumerate(frames)],
             )],
-            height=450 if mobile_mode else 660,
-            margin=dict(l=0, r=0, t=45, b=45) if mobile_mode else dict(l=0, r=0, t=80, b=80),
+            height=660,
+            margin=dict(l=0, r=0, t=80, b=80),
         ),
     )
     return fig
@@ -1092,12 +1086,9 @@ if "ammo_sel_prev" not in st.session_state:
 
 for _k in ("df", "mode", "mach_info", "ammo_snapshot", "sim_params",
            "sim3d_fig_single", "sim3d_fig_range",
-           "compare_df", "compare_params", "compare_3d_fig",
-           "sim3d_info_single", "sim3d_info_range", "comp3d_info"):
+           "compare_df", "compare_params", "compare_3d_fig"):
     if _k not in st.session_state:
         st.session_state[_k] = None
-if "_sidebar_collapse_flag" not in st.session_state:
-    st.session_state["_sidebar_collapse_flag"] = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1119,24 +1110,6 @@ with _hcol_title:
         unsafe_allow_html=True,
     )
 st.divider()
-
-with st.expander("🚀 Hızlı Başlangıç Kılavuzu", expanded=False):
-    st.markdown("""
-**Bu uygulamayı ilk kez kullanıyorsanız:**
-
-1. **Sol panelden mühimmat seçin** — M53 API, M56 A3 HEI veya M55 A2 TP
-2. **Analiz modunu belirleyin** — Tek Tilt (tek açı), Tilt Aralığı (tarama) veya Mühimmat Karşılaştırma
-3. **Mesafe ve Tilt açısını girin** — Hedefe uzaklık ve namlu yükseltme açısı
-4. **Çevresel koşulları ayarlayın** — Sıcaklık, basınç, rüzgar hızı/yönü
-5. **İsteğe bağlı: Pk hesabını etkinleştirin** — Monte Carlo vurma olasılığı analizi için
-6. **⚡ Hesapla butonuna basın**
-7. **Sonuç tablosunu inceleyin** — TOF, Lead, Drop, Impact Velocity ve diğer değerleri görün
-8. **🎯 3D Atış Simülasyonu** ile lead uygulamasını görsel olarak doğrulayın
-9. **Sonuçları dışa aktarın** — PDF, Excel, CSV veya TXT formatında rapor alın
-
-> **İpucu:** Her giriş alanının yanındaki **ⓘ** simgesine tıklayarak o parametrenin ne anlama geldiğini öğrenebilirsiniz.
-> Sonuçların ne anlama geldiğini anlamak için aşağıdaki **📖 Sonuçların Anlamı** bölümünü açın.
-    """)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1194,131 +1167,100 @@ with st.sidebar:
                 "ammo_sel_prev":   selected_ammo,
             })
 
-        # Info kartı — seçili mühimmatın özellikleri (gruplandırılmış)
-        _ai  = AMMO_DB[selected_ammo]
-        _SH  = ('<div style="margin:5px 0 2px;color:#58a6ff;font-size:0.69rem;'
-                'text-transform:uppercase;letter-spacing:0.05em;border-top:1px solid'
-                ' #30363d;padding-top:4px;">')
-        _ib  = [f"<b>{selected_ammo}</b>"]
+        # Info kartı — seçili mühimmatın özellikleri (dinamik)
+        _ai = AMMO_DB[selected_ammo]
 
-        # ── Genel Bilgi ───────────────────────────────────────────────────────
-        _ib.append(f"{_SH}Genel Bilgi</div>")
+        def _ai_get(key, fmt=None):
+            v = _ai.get(key)
+            if v is None:
+                return None
+            return fmt.format(v) if fmt else str(v)
+
+        _info_lines = [f"<b>{selected_ammo}</b>"]
         if _ai.get("type"):
-            _ib.append(f"<b>Tip:</b> {_ai['type']}")
+            _info_lines.append(f"<b>Tip:</b> {_ai['type']}")
         if _ai.get("description_tr"):
-            _ib.append(f"<b>Açıklama:</b> {_ai['description_tr']}")
+            _info_lines.append(f"<b>Açıklama:</b> {_ai['description_tr']}")
+        _info_lines.append("")
 
-        # ── Balistik Özellikler ───────────────────────────────────────────────
-        _ib.append(f"{_SH}Balistik Özellikler</div>")
-        _vel_str = f"<b>Namlu Hızı:</b> {_ai['muzzle_ms']} m/s"
-        if _ai.get("muzzle_tolerance_ms"):
-            _vel_str += f" (tolerans: {_ai['muzzle_tolerance_ms']})"
-        _ib.append(f"<b>Mermi Ağırlığı:</b> {_ai['mass_g']} g &nbsp;·&nbsp; " + _vel_str)
-        if _ai.get("velocity_std_ms") is not None:
-            _ib.append(f"<b>Hız Std Sapması:</b> {_ai['velocity_std_ms']} m/s")
-        for _k, _lbl in (("dispersion", "Dağılım"), ("armor_penetration", "Zırh Delme"),
-                          ("accuracy", "Hassasiyet")):
-            if _ai.get(_k):
-                _ib.append(f"<b>{_lbl}:</b> {_ai[_k]}")
-
-        # ── Fiziksel Özellikler ───────────────────────────────────────────────
-        _ib.append(f"{_SH}Fiziksel Özellikler</div>")
-        _ib.append(
+        _phys = (
+            f"<b>Mermi Ağırlığı (Balistik):</b> {_ai['mass_g']} g &nbsp;·&nbsp; "
             f"<b>Çap:</b> {_ai['diam_mm']} mm &nbsp;·&nbsp; "
             f"<b>Uzunluk:</b> {_ai['length_mm']} mm"
         )
-        for _fk, _ft in [
+        _info_lines.append(_phys)
+        _vel_line = f"<b>Namlu Hızı:</b> {_ai['muzzle_ms']} m/s"
+        if _ai.get("muzzle_tolerance_ms"):
+            _vel_line += f"  (tolerans: {_ai['muzzle_tolerance_ms']})"
+        _info_lines.append(_vel_line)
+        if _ai.get("velocity_std_ms") is not None:
+            _info_lines.append(f"<b>Hız Std Sapması:</b> {_ai['velocity_std_ms']} m/s")
+
+        _OPTIONAL_FIELDS = [
             ("cartridge_weight_g",      "<b>Fişek Ağırlığı:</b> {} g"),
             ("projectile_weight_g",     "<b>Projectile Weight:</b> {} g"),
             ("propellant_weight_g",     "<b>Barut Ağırlığı:</b> {} g"),
             ("case_length_mm",          "<b>Kovan Boyu:</b> {} mm"),
+            ("chamber_pressure_psi",    "<b>Namlu Basıncı:</b> {} psi"),
+            ("max_pressure_psi",        "<b>Maks Basınç:</b> {} psi"),
+            ("avg_pressure_kg_cm2",     "<b>Ort. Basınç:</b> {} kg/cm²"),
+            ("dispersion",              "<b>Dağılım:</b> {}"),
+            ("bullet_pull_force_kgf",   "<b>İrtibat Kuvveti:</b> {}"),
+            ("movement_time_ms",        "<b>Harekete Geçme:</b> {}"),
+            ("armor_penetration",       "<b>Zırh Delme:</b> {}"),
+            ("accuracy",                "<b>Hassasiyet:</b> {}"),
+            ("case_model",              "<b>Kovan Model:</b> {}"),
             ("case_material",           "<b>Kovan Malzeme:</b> {}"),
             ("projectile_body_material","<b>Mermi Gövde:</b> {}"),
-        ]:
-            _v = _ai.get(_fk)
-            if _v is not None:
-                _ib.append(_ft.format(_v))
-
-        # ── Operasyonel Bilgiler ──────────────────────────────────────────────
-        _op_lines = []
-        for _fk, _ft in [
-            ("weapon",                  "<b>Kullanılan Silah:</b> {}"),
             ("fuze",                    "<b>Tapa:</b> {}"),
             ("nose_type",               "<b>Mermi Tapası:</b> {}"),
             ("primer",                  "<b>Kapsül:</b> {}"),
             ("link_type",               "<b>Mayon:</b> {}"),
             ("propellant",              "<b>Barut:</b> {}"),
-            ("case_model",              "<b>Kovan Model:</b> {}"),
-            ("chamber_pressure_psi",    "<b>Namlu Basıncı:</b> {} psi"),
-            ("max_pressure_psi",        "<b>Maks Basınç:</b> {} psi"),
-            ("avg_pressure_kg_cm2",     "<b>Ort. Basınç:</b> {} kg/cm²"),
-            ("bullet_pull_force_kgf",   "<b>İrtibat Kuvveti:</b> {}"),
-            ("movement_time_ms",        "<b>Harekete Geçme:</b> {}"),
-        ]:
-            _v = _ai.get(_fk)
+            ("weapon",                  "<b>Kullanılan Silah:</b> {}"),
+        ]
+        _info_lines.append("")
+        for _field, _tmpl in _OPTIONAL_FIELDS:
+            _v = _ai.get(_field)
             if _v is not None:
-                _op_lines.append(_ft.format(_v))
-        if _op_lines:
-            _ib.append(f"{_SH}Operasyonel Bilgiler</div>")
-            _ib.extend(_op_lines)
+                _info_lines.append(_tmpl.format(_v))
 
         st.markdown(
-            '<div class="info-box">' + "<br>".join(_ib) + "</div>",
+            '<div class="info-box">' + "<br>".join(_info_lines) + "</div>",
             unsafe_allow_html=True,
         )
 
         # ── Mühimmat (düzenlenebilir parametreler) ────────────────────────────
         st.markdown('<div class="section-header">Mühimmat</div>', unsafe_allow_html=True)
-        bullet_name = st.text_input("Mermi Adı", key="ammo_input_name",
-                                    help="Hesap kaydı için kullanılan mühimmat etiketi.")
-        bullet_mass = st.number_input(
-            "Ağırlık (g)", min_value=1.0, step=0.1, key="ammo_input_mass",
-            help="Mermi çekirdeğinin ağırlığı (gram). Balistik hesabında atalet ve kinetik enerji bu değerden hesaplanır. Daha ağır mermiler rüzgardan daha az etkilenir.",
-        )
-        bullet_diam = st.number_input(
-            "Çap (mm)", min_value=1.0, step=0.1, key="ammo_input_diam",
-            help="Merminin nominal çapı (milimetre). Hava direnci hesabında kesit alanı A = π·r² bu değerden elde edilir.",
-        )
-        bullet_len  = st.number_input(
-            "Uzunluk (mm)", min_value=0.1, step=0.1, key="ammo_input_len",
-            help="Kayıt amaçlı — fizik hesabında kullanılmaz.",
-        )
-        muzzle_vel  = st.number_input(
-            "Namlu Hızı (m/s)", min_value=1.0, step=1.0, key="ammo_input_vel",
-            help="Merminin namludan çıktığı ilk hız. Daha yüksek namlu hızı daha kısa TOF ve daha az düşüş sağlar.",
-        )
-        cd_val      = st.number_input(
-            "Cd (sabit)", min_value=0.01, step=0.01, key="ammo_input_cd",
-            format="%.3f",
-            help="Hava direnci katsayısı (drag coefficient). Düşük Cd merminin hızını daha iyi korumasını sağlar. Mach Dependent Cd açıkken bu değer kullanılmaz.",
-        )
+        bullet_name = st.text_input("Mermi Adı",         key="ammo_input_name")
+        bullet_mass = st.number_input("Ağırlık (g)",      min_value=1.0,  step=0.1,   key="ammo_input_mass")
+        bullet_diam = st.number_input("Çap (mm)",         min_value=1.0,  step=0.1,   key="ammo_input_diam")
+        bullet_len  = st.number_input("Uzunluk (mm)",     min_value=0.1,  step=0.1,   key="ammo_input_len",
+                                       help="Kayıt amaçlı — fizik hesabında kullanılmaz.")
+        muzzle_vel  = st.number_input("Namlu Hızı (m/s)", min_value=1.0,  step=1.0,   key="ammo_input_vel")
+        cd_val      = st.number_input("Cd (sabit)",       min_value=0.01, step=0.01,  key="ammo_input_cd",
+                                       format="%.3f",
+                                       help="Mach Dependent Cd kapalıyken bu değer kullanılır.")
         use_mach_table = st.checkbox(
             "Mach Dependent Cd", value=False,
-            help="Açıksa MACH_TABLE/CD_TABLE ile np.interp. Kapalıysa sabit Cd. Mach tabanlı model transonik geçişte daha gerçekçi sonuç verir.",
+            help="Açıksa MACH_TABLE/CD_TABLE ile np.interp. Kapalıysa sabit Cd.",
         )
 
     # ── Koşullar ──────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Koşullar</div>', unsafe_allow_html=True)
-    distance = st.number_input(
-        "Mesafe (m)", value=1000.0, min_value=10.0, step=10.0,
-        help="Atış yapılan hedefe olan doğrusal mesafe. Daha uzun mesafe daha uzun TOF, daha fazla düşüş ve daha fazla rüzgar sürüklenmesi anlamına gelir.",
-    )
+    distance = st.number_input("Mesafe (m)", value=1000.0, min_value=10.0, step=10.0)
 
     if analysis_mode == "Tek Tilt":
         tilt_angle = st.number_input(
             "Tilt / Elevation (°)", value=2.0,
             min_value=-45.0, max_value=45.0, step=0.1,
-            help="Namlu ekseninin yatay düzleme göre yukarı kaldırılma açısı. Hedefin biraz yukarısına nişan alarak yerçekimi düşüşü telafi edilir. 'Required Elevation' bu açının ideal değeridir.",
         )
         comp_tilt         = tilt_angle
         comp_target_speed = 100.0
     elif analysis_mode == "Tilt Aralığı":
-        tilt_start = st.number_input("Başlangıç Tilt (°)", value=1.0,  min_value=-45.0, max_value=45.0, step=0.1,
-                                     help="Tarama başlangıcı için minimum namlu yükseltme açısı.")
-        tilt_end   = st.number_input("Bitiş Tilt (°)",     value=15.0, min_value=-45.0, max_value=45.0, step=0.1,
-                                     help="Tarama bitişi için maksimum namlu yükseltme açısı.")
-        tilt_step  = st.number_input("Tilt Adımı (°)",     value=0.5,  min_value=0.01,  max_value=10.0, step=0.1,
-                                     format="%.2f", help="Her adımdaki açı artışı. Küçük adım = daha fazla veri noktası.")
+        tilt_start = st.number_input("Başlangıç Tilt (°)", value=1.0,  min_value=-45.0, max_value=45.0, step=0.1)
+        tilt_end   = st.number_input("Bitiş Tilt (°)",     value=15.0, min_value=-45.0, max_value=45.0, step=0.1)
+        tilt_step  = st.number_input("Tilt Adımı (°)",     value=0.5,  min_value=0.01,  max_value=10.0, step=0.1, format="%.2f")
         comp_tilt         = tilt_start
         comp_target_speed = 100.0
     else:  # Mühimmat Karşılaştırma
@@ -1326,24 +1268,16 @@ with st.sidebar:
             "Tilt / Elevation (°)", value=2.0,
             min_value=-45.0, max_value=45.0, step=0.1,
             key="comp_tilt_input",
-            help="Tüm mühimmat türleri için sabit namlu yükseltme açısı. Karşılaştırma bu açı altında yapılır.",
         )
         comp_target_speed = float(st.number_input(
             "Hedef Hızı (km/h)", value=100,
             min_value=1, max_value=500, step=1,
             key="comp_target_speed_input",
-            help="Lead hesabında kullanılan hedef hızı. Tüm mühimmat türleri bu hızla karşılaştırılır.",
         ))
         tilt_angle = comp_tilt
 
-    temperature = st.number_input(
-        "Sıcaklık (°C)", value=15.0, min_value=-60.0, max_value=60.0, step=0.5,
-        help="Ortam sıcaklığı. Sıcaklık arttıkça hava yoğunluğu azalır ve mermi daha az hava direnci yaşar. ISA modeli kullanılır.",
-    )
-    pressure = st.number_input(
-        "Basınç (hPa)", value=1013.25, min_value=800.0, step=0.5,
-        help="Atmosfer basıncı. Rakım arttıkça basınç düşer; düşük basınçta hava yoğunluğu azalır ve drag kuvveti azalır.",
-    )
+    temperature = st.number_input("Sıcaklık (°C)", value=15.0,    min_value=-60.0, max_value=60.0, step=0.5)
+    pressure    = st.number_input("Basınç (hPa)",  value=1013.25, min_value=800.0, step=0.5)
 
     # ── Rüzgar ────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Rüzgar</div>', unsafe_allow_html=True)
@@ -1354,27 +1288,19 @@ with st.sidebar:
         '</div>',
         unsafe_allow_html=True,
     )
-    ht_spd = st.number_input(
-        "Head/Tail Wind (m/s)", value=0.0, min_value=0.0, step=0.1,
-        help="Atış yönündeki (x ekseni) rüzgar hızı. Headwind merminin efektif hızını düşürür (daha fazla drag); Tailwind hızlandırır.",
-    )
+    ht_spd = st.number_input("Head/Tail Wind (m/s)", value=0.0, min_value=0.0, step=0.1)
     ht_dir = st.radio(
         "Head/Tail Yön",
         ["Karşıdan — Headwind (−x)", "Arkadan — Tailwind (+x)"],
         index=0, key="ht_dir",
-        help="Karşı rüzgar (headwind) merminin uçuş yönünün tersinden gelir. Arka rüzgar (tailwind) ise merminin arkasından.",
     )
     wind_x = -ht_spd if ht_dir.startswith("Karşıdan") else +ht_spd
 
-    cw_spd = st.number_input(
-        "Crosswind (m/s)", value=0.0, min_value=0.0, step=0.1,
-        help="Yanal (z ekseni) rüzgar hızı. Mermiyi sağa veya sola sürükler; Wind Drift sonucu bu etkiyi metre cinsinden gösterir.",
-    )
+    cw_spd = st.number_input("Crosswind (m/s)", value=0.0, min_value=0.0, step=0.1)
     cw_dir = st.radio(
         "Crosswind Yönü",
         ["+Z yönünde (sağ sapma)", "−Z yönünde (sol sapma)"],
         index=0, key="cw_dir",
-        help="+Z yönü sağ yanal sapmayı, −Z yönü sol yanal sapmayı ifade eder.",
     )
     wind_z = +cw_spd if cw_dir.startswith("+Z") else -cw_spd
 
@@ -1387,37 +1313,15 @@ with st.sidebar:
         '</div>',
         unsafe_allow_html=True,
     )
-    do_pk = st.checkbox("Pk hesapla", value=False, key="do_pk",
-                        help="Monte Carlo simülasyonuyla vurma olasılığı (Pk) hesaplar. Hesaplama süresi artar.")
+    do_pk = st.checkbox("Pk hesapla", value=False, key="do_pk")
 
-    target_radius = st.number_input(
-        "Hedef yarıçapı (m)", value=1.0, min_value=0.1, step=0.1, format="%.2f",
-        help="Dairesel hedef geometrisinin yarıçapı. Bu alan içine düşen mermiler isabet sayılır.",
-    )
-    burst_size = st.number_input(
-        "Burst mermi sayısı", value=25, min_value=1, step=1,
-        help="Bir atış serisindeki mermi sayısı. Burst içinde en az bir mermi isabet ederse deneme başarılı sayılır.",
-    )
-    disp_mrad = st.number_input(
-        "Dispersion sigma (mrad)", value=1.5, min_value=0.01, step=0.1, format="%.2f",
-        help="Silah ve mühimmatın doğal saçılım miktarı (miliradian cinsinden). σ_m = mesafe × tan(σ_mrad / 1000).",
-    )
-    track_err = st.number_input(
-        "Tracking/Radar error sigma (m)", value=0.5, min_value=0.0, step=0.1, format="%.2f",
-        help="Radar veya takip sisteminin hedef konumunu belirleme hatası (metre). Bu hata önleme hesabını doğrudan etkiler.",
-    )
-    lead_err_coef = st.number_input(
-        "Lead error coefficient", value=0.02, min_value=0.0, step=0.005, format="%.3f",
-        help="Önleme hesaplamasındaki sistematik hata katsayısı. Toplam efektif tracking hatası = σ_tracking + Lead × bu katsayı.",
-    )
-    num_trials = st.number_input(
-        "Monte Carlo deneme sayısı", value=1000, min_value=10, max_value=50000, step=100,
-        help="Pk hesabında kullanılan simülasyon deneme sayısı. Daha yüksek değer daha kararlı Pk tahmini verir.",
-    )
-    pk_seed = st.number_input(
-        "Random Seed", value=42, min_value=0, step=1,
-        help="Monte Carlo rastgelelik tohumu. Aynı seed ile tekrar çalıştırıldığında aynı Pk sonucu üretilir.",
-    )
+    target_radius = st.number_input("Hedef yarıçapı (m)",            value=1.0,  min_value=0.1,  step=0.1,   format="%.2f")
+    burst_size    = st.number_input("Burst mermi sayısı",             value=25,   min_value=1,    step=1)
+    disp_mrad     = st.number_input("Dispersion sigma (mrad)",        value=1.5,  min_value=0.01, step=0.1,   format="%.2f")
+    track_err     = st.number_input("Tracking/Radar error sigma (m)", value=0.5,  min_value=0.0,  step=0.1,   format="%.2f")
+    lead_err_coef = st.number_input("Lead error coefficient",         value=0.02, min_value=0.0,  step=0.005, format="%.3f")
+    num_trials    = st.number_input("Monte Carlo deneme sayısı",      value=1000, min_value=10,   max_value=50000, step=100)
+    pk_seed       = st.number_input("Random Seed",                    value=42,   min_value=0,    step=1)
 
     st.markdown("")
     calc_btn = st.button("⚡ Hesapla")
@@ -1483,10 +1387,10 @@ if calc_btn:
             muzzle_vel_ms=float(muzzle_vel), cd_base=float(cd_val),
             use_mach_table=bool(use_mach_table),
         )
-        st.session_state["sim3d_fig_single"]       = None
-        st.session_state["sim3d_fig_range"]        = None
-        st.session_state["compare_df"]             = None
-        st.session_state["_sidebar_collapse_flag"] = True
+        st.session_state["sim3d_fig_single"] = None
+        st.session_state["sim3d_fig_range"]  = None
+        st.session_state["compare_df"]       = None
+        st.session_state["_collapse_sidebar"] = True
 
     elif analysis_mode == "Tilt Aralığı":
         _ammo_snap = {
@@ -1532,10 +1436,10 @@ if calc_btn:
                 muzzle_vel_ms=float(muzzle_vel), cd_base=float(cd_val),
                 use_mach_table=bool(use_mach_table),
             )
-            st.session_state["sim3d_fig_single"]       = None
-            st.session_state["sim3d_fig_range"]        = None
-            st.session_state["compare_df"]             = None
-            st.session_state["_sidebar_collapse_flag"] = True
+            st.session_state["sim3d_fig_single"] = None
+            st.session_state["sim3d_fig_range"]  = None
+            st.session_state["compare_df"]       = None
+            st.session_state["_collapse_sidebar"] = True
 
     else:  # Mühimmat Karşılaştırma
         if not comp_ammo_keys:
@@ -1566,11 +1470,26 @@ if calc_btn:
                 wind_z=float(wind_z),
                 use_mach_table=bool(use_mach_table),
             )
-            st.session_state["compare_3d_fig"]         = None
-            st.session_state["df"]                     = None
-            st.session_state["sim3d_fig_single"]       = None
-            st.session_state["sim3d_fig_range"]        = None
-            st.session_state["_sidebar_collapse_flag"] = True
+            st.session_state["compare_3d_fig"]   = None
+            st.session_state["df"]               = None
+            st.session_state["sim3d_fig_single"] = None
+            st.session_state["sim3d_fig_range"]  = None
+            st.session_state["_collapse_sidebar"] = True
+
+
+if st.session_state.get("_collapse_sidebar"):
+    st.session_state["_collapse_sidebar"] = False
+    components.html(
+        """<script>
+        setTimeout(function(){
+            var btn = window.parent.document.querySelector(
+                '[data-testid="stSidebarCollapseButton"] button'
+            );
+            if (btn) btn.click();
+        }, 300);
+        </script>""",
+        height=0,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1584,39 +1503,6 @@ _has_any_results = (
 if not _has_any_results:
     st.info("Sol panelden parametreleri girin ve **⚡ Hesapla** butonuna basın.")
     st.stop()
-
-st.markdown('<div id="results"></div>', unsafe_allow_html=True)
-
-# Auto-collapse sidebar on mobile + scroll to results after calculation
-if st.session_state.get("_sidebar_collapse_flag"):
-    components.html(
-        """<script>
-        (function() {
-            try {
-                var doc = window.parent.document;
-                var w = window.parent.innerWidth || window.innerWidth;
-                // Sidebar collapse — try multiple selectors for reliability
-                var buttons = Array.from(doc.querySelectorAll('button'));
-                var collapseBtn = buttons.find(function(btn) {
-                    var label = btn.getAttribute('aria-label') || '';
-                    return label.toLowerCase().includes('close sidebar') ||
-                           label.toLowerCase().includes('collapse sidebar') ||
-                           btn.innerText.includes('×');
-                });
-                if (w < 900 && collapseBtn) {
-                    setTimeout(function() { collapseBtn.click(); }, 400);
-                }
-                // Scroll to results anchor
-                setTimeout(function() {
-                    var el = doc.getElementById('results');
-                    if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
-                }, 300);
-            } catch(e) {}
-        })();
-        </script>""",
-        height=0,
-    )
-    st.session_state["_sidebar_collapse_flag"] = False
 
 mode = st.session_state["mode"]
 
@@ -1647,59 +1533,6 @@ BASE_FMT: dict = {
     "Total Sigma (m)":         "{:.3f}",
     "Target Radius (m)":       "{:.2f}",
 }
-
-# Display-only column rename map (applied only to st.dataframe calls, not underlying data)
-DISPLAY_COLS = {
-    "TOF (s)":               "TOF — Time of Flight (s)",
-    "Lead (m)":              "Lead Distance (m)",
-    "Drop (m)":              "Bullet Drop (m)",
-    "Impact Velocity (m/s)": "Impact Velocity at Target (m/s)",
-    "Impact Energy (J)":     "Impact Energy at Target (J)",
-    "Impact Y (m)":          "Vertical Miss / Impact Y (m)",
-    "Wind Drift (m)":        "Wind Drift (m)",
-}
-
-
-def _show_result_guide():
-    """Expandable panel explaining what each result column means."""
-    with st.expander("📖 Sonuçların Anlamı", expanded=False):
-        st.markdown("""
-**TOF — Time of Flight (s)**
-Merminin namludan hedefe ulaşana kadar geçen süre. Daha kısa TOF daha az lead, daha az düşüş ve daha az rüzgar sürüklenmesi anlamına gelir.
-
-**Lead Distance (m)**
-Hedef hareket ediyorsa merminin uçuş süresince hedefin kat edeceği mesafe. Nişan bu mesafe kadar hedefin ilerisine alınmalıdır. `Lead = Hedef Hızı × TOF`.
-
-**Bullet Drop (m)**
-Yerçekimi nedeniyle merminin aşağı düşme miktarı. Required Elevation bu düşüşü telafi edecek şekilde hesaplanır.
-
-**Wind Drift (m)**
-Yanal rüzgar nedeniyle merminin sağa veya sola sapma miktarı. Artı değer +Z yönünde (sağa) sapmayı gösterir.
-
-**Impact Velocity at Target (m/s)**
-Merminin hedefe çarptığı andaki hızı. Başlangıç hızından (Namlu Hızı) daha düşüktür; fark hava direncinden kaynaklanır.
-
-**Impact Energy at Target (J)**
-Merminin hedefe çarptığı andaki kinetik enerjisi. `E = ½mv²`. Hedef üzerindeki hasar potansiyelini gösterir.
-
-**Required Elevation (°)**
-Tam isabet için gereken namlu yükseltme açısı. Bisection yöntemiyle hesaplanır. Girilen Tilt bu değere ne kadar yakınsa isabet o kadar kesindir.
-
-**Vertical Miss / Impact Y (m)**
-Merminin y-eksenindeki nihai konumu (yükseltme). Sıfır = tam hedef irtifası. Pozitif = hedefin üstünde, negatif = altında.
-
-**Vertical Error (m) / Dikey Hata (°)**
-Girilen Tilt değeri ile Required Elevation arasındaki fark. Sıfıra yakın olması isabeti daha kesin kılar.
-
-**Impact Mach**
-Merminin hedefe çarptığı andaki Mach sayısı. `Hız / Ses Hızı`. Süpersonik (>1) veya sübsonik (<1) rejimi gösterir.
-
-**Average Cd**
-Uçuş boyunca kullanılan ortalama hava direnci katsayısı. Mach Dependent Cd açıksa uçuş sırasında Mach'a göre değişir.
-
-**Pk (%)**
-Probability of Kill — Monte Carlo simülasyonu ile hesaplanan vurma olasılığı. Burst içinde en az bir merminin hedef alanı içine düşme yüzdesidir.
-        """)
 
 
 def _ammo_metric_cards():
@@ -2036,7 +1869,6 @@ if mode == "Tek Tilt":
     # ── Table ─────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Sonuç Tablosu (1–500 km/h)</div>',
                 unsafe_allow_html=True)
-    _show_result_guide()
     search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100",
                            key="search_single")
     show_df = df.copy()
@@ -2048,10 +1880,7 @@ if mode == "Tek Tilt":
 
     fmt = {k: v for k, v in BASE_FMT.items() if k in show_df.columns}
     fmt["Girilen Tilt (°)"] = "{:.4f}"
-    _disp = show_df.rename(columns=DISPLAY_COLS)
-    _dfmt = {DISPLAY_COLS.get(k, k): v for k, v in fmt.items()}
-    _dfmt = {k: v for k, v in _dfmt.items() if k in _disp.columns}
-    st.dataframe(_disp.style.format(_dfmt), use_container_width=True, height=430)
+    st.dataframe(show_df.style.format(fmt), use_container_width=True, height=430)
 
     _render_export_section(df, "Tek Tilt", "ballistic_single_tilt")
 
@@ -2078,10 +1907,6 @@ if mode == "Tek Tilt":
             index=0, horizontal=True, key="sim3d_scale_s",
         )
         _scale_mode_s = "visual" if _scale_lbl_s == "Görsel Ölçek" else "real"
-        _mobile_s = st.checkbox(
-            "📱 Mobil görünüm", value=True, key="sim3d_mobile_s",
-            help="Açıksa legend ve kamera menüsü kapalı, grafik 450 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
-        )
 
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_single"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
@@ -2134,24 +1959,12 @@ if mode == "Tek Tilt":
                     tilt_deg=_sim_tlt,
                     entered_tilt_deg=_ent_tlt,
                     scale_mode=_scale_mode_s,
-                    mobile_mode=_mobile_s,
                 )
                 st.session_state["sim3d_fig_single"] = _fig3d
-                st.session_state["sim3d_info_single"] = (
-                    f"TOF: {_traj['tof']:.4f} s  ·  Lead: {_lead_s:.3f} m  ·  "
-                    f"Vertical Miss: {_traj['impact_y']:.3f} m  ·  "
-                    f"Wind Drift: {_wdr:.3f} m  ·  "
-                    f"Required Elev: {_req_e:.4f}°  ·  Tilt: {_sim_tlt:.4f}°"
-                )
 
         _fig3d_s = st.session_state.get("sim3d_fig_single")
         if _fig3d_s is not None:
-            if _mobile_s and st.session_state.get("sim3d_info_single"):
-                st.caption(st.session_state["sim3d_info_single"])
-            st.plotly_chart(
-                _fig3d_s, use_container_width=True,
-                config={"displayModeBar": not _mobile_s, "responsive": True, "scrollZoom": True},
-            )
+            st.plotly_chart(_fig3d_s, use_container_width=True)
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")
 
@@ -2249,7 +2062,6 @@ elif mode == "Tilt Aralığı":
         '</div>',
         unsafe_allow_html=True,
     )
-    _show_result_guide()
     search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100",
                            key="search_range")
     show_df = df.copy()
@@ -2261,10 +2073,7 @@ elif mode == "Tilt Aralığı":
 
     fmt = {k: v for k, v in BASE_FMT.items() if k in show_df.columns}
     fmt["Tilt (°)"] = "{:.4f}"
-    _disp = show_df.rename(columns=DISPLAY_COLS)
-    _dfmt = {DISPLAY_COLS.get(k, k): v for k, v in fmt.items()}
-    _dfmt = {k: v for k, v in _dfmt.items() if k in _disp.columns}
-    st.dataframe(_disp.style.format(_dfmt), use_container_width=True, height=430)
+    st.dataframe(show_df.style.format(fmt), use_container_width=True, height=430)
 
     _render_export_section(df, "Tilt Aralığı", "ballistic_tilt_sweep")
 
@@ -2299,10 +2108,6 @@ elif mode == "Tilt Aralığı":
             index=0, horizontal=True, key="sim3d_scale_r",
         )
         _scale_mode_r = "visual" if _scale_lbl_r == "Görsel Ölçek" else "real"
-        _mobile_r = st.checkbox(
-            "📱 Mobil görünüm", value=True, key="sim3d_mobile_r",
-            help="Açıksa legend ve kamera menüsü kapalı, grafik 450 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
-        )
 
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_range"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
@@ -2362,24 +2167,12 @@ elif mode == "Tilt Aralığı":
                     tilt_deg=_sim_tlt,
                     entered_tilt_deg=_ent_tlt,
                     scale_mode=_scale_mode_r,
-                    mobile_mode=_mobile_r,
                 )
                 st.session_state["sim3d_fig_range"] = _fig3d
-                st.session_state["sim3d_info_range"] = (
-                    f"TOF: {_traj['tof']:.4f} s  ·  Lead: {_lead_r:.3f} m  ·  "
-                    f"Vertical Miss: {_traj['impact_y']:.3f} m  ·  "
-                    f"Wind Drift: {_wdr:.3f} m  ·  "
-                    f"Required Elev: {_req_e:.4f}°  ·  Tilt: {_sim_tlt:.4f}°"
-                )
 
         _fig3d_r = st.session_state.get("sim3d_fig_range")
         if _fig3d_r is not None:
-            if _mobile_r and st.session_state.get("sim3d_info_range"):
-                st.caption(st.session_state["sim3d_info_range"])
-            st.plotly_chart(
-                _fig3d_r, use_container_width=True,
-                config={"displayModeBar": not _mobile_r, "responsive": True, "scrollZoom": True},
-            )
+            st.plotly_chart(_fig3d_r, use_container_width=True)
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")
 
@@ -2483,7 +2276,6 @@ elif mode == "Mühimmat Karşılaştırma":
     # ── Tablo ─────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Karşılaştırma Tablosu</div>',
                 unsafe_allow_html=True)
-    _show_result_guide()
 
     _cfmt = {
         "TOF (s)":                "{:.4f}",
@@ -2507,10 +2299,7 @@ elif mode == "Mühimmat Karşılaştırma":
             "Total Sigma (m)":         "{:.3f}",
         })
     _cfmt_active = {k: v for k, v in _cfmt.items() if k in cdf.columns}
-    _cdisp = cdf.rename(columns=DISPLAY_COLS)
-    _cdfmt = {DISPLAY_COLS.get(k, k): v for k, v in _cfmt_active.items()}
-    _cdfmt = {k: v for k, v in _cdfmt.items() if k in _cdisp.columns}
-    st.dataframe(_cdisp.style.format(_cdfmt), use_container_width=True)
+    st.dataframe(cdf.style.format(_cfmt_active), use_container_width=True)
 
     _render_export_section(cdf, "Mühimmat Karşılaştırma", "ammo_comparison")
 
@@ -2534,10 +2323,6 @@ elif mode == "Mühimmat Karşılaştırma":
             index=0, horizontal=True, key="comp3d_scale",
         )
         _scale_mode_c = "visual" if _scale_lbl_c == "Görsel Ölçek" else "real"
-        _mobile_c = st.checkbox(
-            "📱 Mobil görünüm", value=True, key="comp3d_mobile",
-            help="Açıksa legend ve kamera menüsü kapalı, grafik 450 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
-        )
 
         if st.button("🎯 3D Animasyon Oluştur", key="comp3d_btn"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
@@ -2592,23 +2377,11 @@ elif mode == "Mühimmat Karşılaştırma":
                     tilt_deg=_sim_tlt,
                     entered_tilt_deg=_ent_tlt,
                     scale_mode=_scale_mode_c,
-                    mobile_mode=_mobile_c,
                 )
                 st.session_state["compare_3d_fig"] = _fig3d_c
-                st.session_state["comp3d_info"] = (
-                    f"TOF: {_ctraj['tof']:.4f} s  ·  Lead: {_lead_c:.3f} m  ·  "
-                    f"Vertical Miss: {_ctraj['impact_y']:.3f} m  ·  "
-                    f"Wind Drift: {_wdr:.3f} m  ·  "
-                    f"Required Elev: {_req_e:.4f}°  ·  Tilt: {_sim_tlt:.4f}°"
-                )
 
         _fig3d_c = st.session_state.get("compare_3d_fig")
         if _fig3d_c is not None:
-            if _mobile_c and st.session_state.get("comp3d_info"):
-                st.caption(st.session_state["comp3d_info"])
-            st.plotly_chart(
-                _fig3d_c, use_container_width=True,
-                config={"displayModeBar": not _mobile_c, "responsive": True, "scrollZoom": True},
-            )
+            st.plotly_chart(_fig3d_c, use_container_width=True)
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")

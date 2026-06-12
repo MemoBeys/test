@@ -1372,7 +1372,7 @@ with st.sidebar:
         '</div>',
         unsafe_allow_html=True,
     )
-    do_pk = st.checkbox("Pk hesapla", value=False, key="do_pk",
+    do_pk = st.checkbox("Pk hesapla", value=True, key="do_pk",
                         help="Monte Carlo Hit Probability (Pk) hesaplamalarını etkinleştirir. "
                              "Açıkken hesaplama süresi artar.")
 

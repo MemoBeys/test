@@ -64,6 +64,11 @@ div[data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius:
     border:none; border-radius:8px; font-weight:700; width:100%;
 }
 label { color: var(--subtext) !important; font-size: 0.82rem !important; }
+[data-testid="stSidebar"] [data-testid="stRadio"] label,
+[data-testid="stSidebar"] [data-testid="stRadio"] label p {
+    color: var(--text) !important;
+    font-size: 0.85rem !important;
+}
 input, .stNumberInput input {
     background-color:#21262d !important; color:var(--text) !important;
     border:1px solid var(--border) !important; border-radius:6px !important;

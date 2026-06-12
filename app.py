@@ -78,6 +78,13 @@ label { color: var(--subtext) !important; font-size: 0.82rem !important; }
     color: var(--text) !important;
     font-size: 0.85rem !important;
 }
+[data-testid="stMain"] [data-testid="stCheckbox"] label,
+[data-testid="stMain"] [data-testid="stCheckbox"] label p,
+[data-testid="stMain"] [data-testid="stRadio"] label,
+[data-testid="stMain"] [data-testid="stRadio"] label p {
+    color: var(--text) !important;
+    font-size: 0.85rem !important;
+}
 input, .stNumberInput input {
     background-color:#21262d !important; color:var(--text) !important;
     border:1px solid var(--border) !important; border-radius:6px !important;
@@ -2048,7 +2055,7 @@ if mode == "Tek Tilt":
         with _sc2:
             _use_lead_s    = st.checkbox("Lead uygulanmış atış",       value=True,  key="sim3d_lead_s")
         with _sc3:
-            _use_req_elev_s = st.checkbox("Required elevation ile göster", value=False, key="sim3d_req_s")
+            _use_req_elev_s = st.checkbox("Required elevation ile göster", value=True, key="sim3d_req_s")
 
         _scale_lbl_s = st.radio(
             "Ölçek Modu", ["Görsel Ölçek", "Gerçek Ölçek"],
@@ -2253,7 +2260,7 @@ elif mode == "Tilt Aralığı":
         with _rc3:
             _use_lead_r     = st.checkbox("Lead uygulanmış atış",           value=True,  key="sim3d_lead_r")
         with _rc4:
-            _use_req_elev_r = st.checkbox("Required elevation ile göster",  value=False, key="sim3d_req_r")
+            _use_req_elev_r = st.checkbox("Required elevation ile göster",  value=True, key="sim3d_req_r")
 
         _scale_lbl_r = st.radio(
             "Ölçek Modu", ["Görsel Ölçek", "Gerçek Ölçek"],
@@ -2471,7 +2478,7 @@ elif mode == "Mühimmat Karşılaştırma":
         with _cc1:
             _use_lead_c     = st.checkbox("Lead uygulanmış atış",           value=True,  key="comp3d_lead")
         with _cc2:
-            _use_req_elev_c = st.checkbox("Required elevation ile göster",  value=False, key="comp3d_req")
+            _use_req_elev_c = st.checkbox("Required elevation ile göster",  value=True, key="comp3d_req")
 
         _scale_lbl_c = st.radio(
             "Ölçek Modu", ["Görsel Ölçek", "Gerçek Ölçek"],

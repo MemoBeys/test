@@ -60,8 +60,17 @@ div[data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius:
 }
 .stButton > button:hover { opacity:0.85; }
 .stDownloadButton > button {
-    background: linear-gradient(135deg,#238636,#3fb950); color:#fff !important;
-    border:none; border-radius:8px; font-weight:700; width:100%;
+    background: linear-gradient(135deg,#1c2128,#21262d) !important;
+    color: var(--accent) !important;
+    border: 1px solid var(--accent) !important;
+    border-radius: 8px; font-weight: 600; width: 100%;
+    padding: 0.55rem 1.4rem; transition: all 0.18s ease;
+}
+.stDownloadButton > button:hover {
+    background: linear-gradient(135deg,#1f6feb,#388bfd) !important;
+    color: #fff !important;
+    border-color: transparent !important;
+    opacity: 1;
 }
 label { color: var(--subtext) !important; font-size: 0.82rem !important; }
 [data-testid="stSidebar"] [data-testid="stRadio"] label,

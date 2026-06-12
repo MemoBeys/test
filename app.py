@@ -1964,6 +1964,30 @@ if mode == "Tek Tilt":
 
     st.divider()
 
+    # ── Table ─────────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Sonuç Tablosu (1–500 km/h)</div>',
+                unsafe_allow_html=True)
+
+    with st.expander("📖 Sonuçların Anlamı", expanded=False):
+        st.markdown(_RESULTS_GUIDE)
+
+    search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100",
+                           key="search_single")
+    show_df = df.copy()
+    if search.strip():
+        try:
+            show_df = show_df[show_df["Hedef Hızı (km/h)"] == float(search.strip())]
+        except ValueError:
+            pass
+
+    fmt = {k: v for k, v in BASE_FMT.items() if k in show_df.columns}
+    fmt["Girilen Tilt (°)"] = "{:.4f}"
+    st.dataframe(_display_df(show_df, fmt), use_container_width=True, height=430)
+
+    _render_export_section(df, "Tek Tilt", "ballistic_single_tilt")
+
+    st.divider()
+
     # ── Charts ────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Grafikler</div>', unsafe_allow_html=True)
     st.markdown(
@@ -1998,30 +2022,6 @@ if mode == "Tek Tilt":
         with col6:
             st.markdown("**Pk vs Hedef Hızı**")
             _show_fig(make_figure(df, "Hedef Hızı (km/h)", "Pk (%)", "#e3b341", "Pk (%)"))
-
-    st.divider()
-
-    # ── Table ─────────────────────────────────────────────────────────────────
-    st.markdown('<div class="section-header">Sonuç Tablosu (1–500 km/h)</div>',
-                unsafe_allow_html=True)
-
-    with st.expander("📖 Sonuçların Anlamı", expanded=False):
-        st.markdown(_RESULTS_GUIDE)
-
-    search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100",
-                           key="search_single")
-    show_df = df.copy()
-    if search.strip():
-        try:
-            show_df = show_df[show_df["Hedef Hızı (km/h)"] == float(search.strip())]
-        except ValueError:
-            pass
-
-    fmt = {k: v for k, v in BASE_FMT.items() if k in show_df.columns}
-    fmt["Girilen Tilt (°)"] = "{:.4f}"
-    st.dataframe(_display_df(show_df, fmt), use_container_width=True, height=430)
-
-    _render_export_section(df, "Tek Tilt", "ballistic_single_tilt")
 
     # ── 3D Atış Simülasyonu ───────────────────────────────────────────────────
     st.divider()
@@ -2142,6 +2142,36 @@ elif mode == "Tilt Aralığı":
 
     st.divider()
 
+    # ── Table ─────────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Sonuç Tablosu</div>',
+                unsafe_allow_html=True)
+
+    with st.expander("📖 Sonuçların Anlamı", expanded=False):
+        st.markdown(_RESULTS_GUIDE)
+
+    st.markdown(
+        '<div class="info-box">'
+        'Hız filtresi: belirli bir hedef hızındaki tüm tilt değerlerini gösterir.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100",
+                           key="search_range")
+    show_df = df.copy()
+    if search.strip():
+        try:
+            show_df = show_df[show_df["Hedef Hızı (km/h)"] == float(search.strip())]
+        except ValueError:
+            pass
+
+    fmt = {k: v for k, v in BASE_FMT.items() if k in show_df.columns}
+    fmt["Tilt (°)"] = "{:.4f}"
+    st.dataframe(_display_df(show_df, fmt), use_container_width=True, height=430)
+
+    _render_export_section(df, "Tilt Aralığı", "ballistic_tilt_sweep")
+
+    st.divider()
+
     # ── Charts ────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Grafikler</div>', unsafe_allow_html=True)
     st.markdown(
@@ -2189,36 +2219,6 @@ elif mode == "Tilt Aralığı":
             with gc6:
                 st.markdown("**Tilt vs Total Sigma (m)**")
                 _show_fig(make_figure(chart_df, "Tilt (°)", "Total Sigma (m)", "#79c0ff", "Total Sigma (m)"))
-
-    st.divider()
-
-    # ── Table ─────────────────────────────────────────────────────────────────
-    st.markdown('<div class="section-header">Sonuç Tablosu</div>',
-                unsafe_allow_html=True)
-
-    with st.expander("📖 Sonuçların Anlamı", expanded=False):
-        st.markdown(_RESULTS_GUIDE)
-
-    st.markdown(
-        '<div class="info-box">'
-        'Hız filtresi: belirli bir hedef hızındaki tüm tilt değerlerini gösterir.'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100",
-                           key="search_range")
-    show_df = df.copy()
-    if search.strip():
-        try:
-            show_df = show_df[show_df["Hedef Hızı (km/h)"] == float(search.strip())]
-        except ValueError:
-            pass
-
-    fmt = {k: v for k, v in BASE_FMT.items() if k in show_df.columns}
-    fmt["Tilt (°)"] = "{:.4f}"
-    st.dataframe(_display_df(show_df, fmt), use_container_width=True, height=430)
-
-    _render_export_section(df, "Tilt Aralığı", "ballistic_tilt_sweep")
 
     # ── 3D Atış Simülasyonu ───────────────────────────────────────────────────
     st.divider()

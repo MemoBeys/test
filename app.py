@@ -1606,13 +1606,24 @@ def export_csv(data_df: pd.DataFrame, metadata: list) -> bytes:
 
 
 def export_excel(data_df: pd.DataFrame, metadata: list) -> bytes:
-    """Excel workbook: Sheet1=Metadata, Sheet2=Results."""
-    buf = BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        meta_df = pd.DataFrame(metadata, columns=["Parameter", "Value"])
-        meta_df.to_excel(writer, sheet_name="Metadata", index=False)
-        data_df.to_excel(writer, sheet_name="Results", index=False)
-    return buf.getvalue()
+    """Excel workbook: Sheet1=Metadata, Sheet2=Results, auto column widths."""
+    output  = BytesIO()
+    meta_df = pd.DataFrame(metadata, columns=["Parameter", "Value"])
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        meta_df.to_excel(writer, index=False, sheet_name="Metadata")
+        data_df.to_excel(writer, index=False, sheet_name="Results")
+
+        for sheet_name, ws in writer.sheets.items():
+            for col_cells in ws.columns:
+                col_len = max(
+                    (len(str(c.value)) if c.value is not None else 0)
+                    for c in col_cells
+                )
+                ws.column_dimensions[col_cells[0].column_letter].width = min(col_len + 2, 40)
+
+    output.seek(0)
+    return output.getvalue()
 
 
 def export_txt(data_df: pd.DataFrame, metadata: list) -> bytes:

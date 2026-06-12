@@ -1633,10 +1633,22 @@ _COL_DISPLAY: dict = {
 }
 
 
+_PRIORITY_COLS = [
+    "Hedef Hızı (km/h)",
+    "Lead (m)",
+    "Pk (%)",
+    "Target Radius (m)",
+    "Burst Size",
+]
+
+
 def _display_df(df: pd.DataFrame, fmt: dict):
-    """Kolonları görüntü adlarıyla yeniden adlandırır ve formatlı Styler döner."""
-    col_map     = {k: v for k, v in _COL_DISPLAY.items() if k in df.columns}
-    display     = df.rename(columns=col_map)
+    """Öncelikli kolonları öne alır, görüntü adlarıyla yeniden adlandırır, formatlı Styler döner."""
+    prio    = [c for c in _PRIORITY_COLS if c in df.columns]
+    rest    = [c for c in df.columns if c not in prio]
+    df      = df[prio + rest]
+    col_map = {k: v for k, v in _COL_DISPLAY.items() if k in df.columns}
+    display = df.rename(columns=col_map)
     display_fmt = {col_map.get(k, k): v for k, v in fmt.items()}
     return display.style.format(display_fmt)
 

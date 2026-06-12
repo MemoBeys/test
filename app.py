@@ -1116,6 +1116,22 @@ with _hcol_title:
     )
 st.divider()
 
+with st.expander("🚀 Hızlı Başlangıç — Uygulamayı İlk Kez Kullananlar İçin", expanded=False):
+    st.markdown("""
+**Adım adım kullanım:**
+
+1. **Mühimmat seçin** — Sol panelden hazır mühimmat tipini seçin veya parametreleri manuel girin.
+2. **Mesafeyi girin** — Hedefe olan yatay mesafeyi metre cinsinden girin.
+3. **Tilt açısını belirleyin** — Namlu kaldırma açısını girin (0° = tamamen yatay).
+4. **Koşulları ayarlayın** — Sıcaklık, basınç ve rüzgar değerlerini girin.
+5. **⚡ Hesapla butonuna basın** — Sol panelin altındaki butona tıklayın.
+6. **Sonuçları inceleyin** — TOF, Lead, Drop ve diğer balistik değerleri görün.
+7. **3D animasyon oluşturun** — Sayfanın altındaki *3D Atış Simülasyonu* bölümünden animasyon başlatın.
+8. **Dışa aktarın** — Sonuçları PDF, Excel, CSV veya TXT olarak indirin.
+
+> **Analiz Modları:** *Tek Tilt* — sabit açıyla 1–500 km/h taraması · *Tilt Aralığı* — birden fazla açıyı karşılaştır · *Mühimmat Karşılaştırma* — farklı mühimmatları yan yana analiz et
+""")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SIDEBAR
@@ -1172,7 +1188,7 @@ with st.sidebar:
                 "ammo_sel_prev":   selected_ammo,
             })
 
-        # Info kartı — seçili mühimmatın özellikleri (dinamik)
+        # Info kartı — seçili mühimmatın özellikleri (dinamik, gruplandırılmış)
         _ai = AMMO_DB[selected_ammo]
 
         def _ai_get(key, fmt=None):
@@ -1181,84 +1197,107 @@ with st.sidebar:
                 return None
             return fmt.format(v) if fmt else str(v)
 
-        _info_lines = [f"<b>{selected_ammo}</b>"]
-        if _ai.get("type"):
-            _info_lines.append(f"<b>Tip:</b> {_ai['type']}")
-        if _ai.get("description_tr"):
-            _info_lines.append(f"<b>Açıklama:</b> {_ai['description_tr']}")
-        _info_lines.append("")
+        def _card_section(title, lines):
+            filled = [l for l in lines if l]
+            if not filled:
+                return ""
+            return (
+                "<div style='margin-top:0.45rem;border-top:1px solid var(--border);"
+                "padding-top:0.35rem'>"
+                f"<span style='color:var(--accent);font-size:0.70rem;font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:0.06em'>{title}</span><br>"
+                + "<br>".join(filled)
+                + "</div>"
+            )
 
-        _phys = (
-            f"<b>Mermi Ağırlığı (Balistik):</b> {_ai['mass_g']} g &nbsp;·&nbsp; "
-            f"<b>Çap:</b> {_ai['diam_mm']} mm &nbsp;·&nbsp; "
-            f"<b>Uzunluk:</b> {_ai['length_mm']} mm"
-        )
-        _info_lines.append(_phys)
+        _sec_general = _card_section("Genel Bilgi", [
+            f"<b>{selected_ammo}</b>",
+            _ai_get("type",           "<b>Tip:</b> {}"),
+            _ai_get("description_tr", "<b>Açıklama:</b> {}"),
+        ])
+
         _vel_line = f"<b>Namlu Hızı:</b> {_ai['muzzle_ms']} m/s"
         if _ai.get("muzzle_tolerance_ms"):
-            _vel_line += f"  (tolerans: {_ai['muzzle_tolerance_ms']})"
-        _info_lines.append(_vel_line)
-        if _ai.get("velocity_std_ms") is not None:
-            _info_lines.append(f"<b>Hız Std Sapması:</b> {_ai['velocity_std_ms']} m/s")
+            _vel_line += f" (tolerans: {_ai['muzzle_tolerance_ms']})"
+        _sec_ballistic = _card_section("Balistik Özellikler", [
+            f"<b>Mermi Ağırlığı (Balistik):</b> {_ai['mass_g']} g",
+            _vel_line,
+            f"<b>Cd:</b> {_ai['cd']}",
+            _ai_get("velocity_std_ms",   "<b>Hız Std Sapması:</b> {} m/s"),
+            _ai_get("dispersion",        "<b>Dağılım:</b> {}"),
+            _ai_get("armor_penetration", "<b>Zırh Delme:</b> {}"),
+            _ai_get("accuracy",          "<b>Hassasiyet:</b> {}"),
+        ])
 
-        _OPTIONAL_FIELDS = [
-            ("cartridge_weight_g",      "<b>Fişek Ağırlığı:</b> {} g"),
-            ("projectile_weight_g",     "<b>Projectile Weight:</b> {} g"),
-            ("propellant_weight_g",     "<b>Barut Ağırlığı:</b> {} g"),
-            ("case_length_mm",          "<b>Kovan Boyu:</b> {} mm"),
-            ("chamber_pressure_psi",    "<b>Namlu Basıncı:</b> {} psi"),
-            ("max_pressure_psi",        "<b>Maks Basınç:</b> {} psi"),
-            ("avg_pressure_kg_cm2",     "<b>Ort. Basınç:</b> {} kg/cm²"),
-            ("dispersion",              "<b>Dağılım:</b> {}"),
-            ("bullet_pull_force_kgf",   "<b>İrtibat Kuvveti:</b> {}"),
-            ("movement_time_ms",        "<b>Harekete Geçme:</b> {}"),
-            ("armor_penetration",       "<b>Zırh Delme:</b> {}"),
-            ("accuracy",                "<b>Hassasiyet:</b> {}"),
-            ("case_model",              "<b>Kovan Model:</b> {}"),
-            ("case_material",           "<b>Kovan Malzeme:</b> {}"),
-            ("projectile_body_material","<b>Mermi Gövde:</b> {}"),
-            ("fuze",                    "<b>Tapa:</b> {}"),
-            ("nose_type",               "<b>Mermi Tapası:</b> {}"),
-            ("primer",                  "<b>Kapsül:</b> {}"),
-            ("link_type",               "<b>Mayon:</b> {}"),
-            ("propellant",              "<b>Barut:</b> {}"),
-            ("weapon",                  "<b>Kullanılan Silah:</b> {}"),
-        ]
-        _info_lines.append("")
-        for _field, _tmpl in _OPTIONAL_FIELDS:
-            _v = _ai.get(_field)
-            if _v is not None:
-                _info_lines.append(_tmpl.format(_v))
+        _sec_physical = _card_section("Fiziksel Özellikler", [
+            f"<b>Çap:</b> {_ai['diam_mm']} mm",
+            f"<b>Uzunluk:</b> {_ai['length_mm']} mm",
+            _ai_get("cartridge_weight_g",       "<b>Fişek Ağırlığı:</b> {} g"),
+            _ai_get("projectile_weight_g",      "<b>Mermi Ağırlığı (spec):</b> {} g"),
+            _ai_get("propellant_weight_g",      "<b>Barut Ağırlığı:</b> {} g"),
+            _ai_get("case_length_mm",           "<b>Kovan Boyu:</b> {} mm"),
+            _ai_get("case_model",               "<b>Kovan Model:</b> {}"),
+            _ai_get("case_material",            "<b>Kovan Malzeme:</b> {}"),
+            _ai_get("projectile_body_material", "<b>Mermi Gövde:</b> {}"),
+            _ai_get("nose_type",                "<b>Mermi Tapası:</b> {}"),
+        ])
+
+        _sec_operational = _card_section("Operasyonel Bilgiler", [
+            _ai_get("weapon",               "<b>Kullanılan Silah:</b> {}"),
+            _ai_get("fuze",                 "<b>Tapa:</b> {}"),
+            _ai_get("primer",               "<b>Kapsül:</b> {}"),
+            _ai_get("link_type",            "<b>Mayon:</b> {}"),
+            _ai_get("propellant",           "<b>Barut:</b> {}"),
+            _ai_get("max_pressure_psi",     "<b>Maks Basınç:</b> {} psi"),
+            _ai_get("avg_pressure_kg_cm2",  "<b>Ort. Basınç:</b> {} kg/cm²"),
+            _ai_get("chamber_pressure_psi", "<b>Namlu Basıncı:</b> {} psi"),
+            _ai_get("bullet_pull_force_kgf","<b>İrtibat Kuvveti:</b> {}"),
+            _ai_get("movement_time_ms",     "<b>Harekete Geçme:</b> {}"),
+        ])
 
         st.markdown(
-            '<div class="info-box">' + "<br>".join(_info_lines) + "</div>",
+            '<div class="info-box">'
+            + _sec_general + _sec_ballistic + _sec_physical + _sec_operational
+            + '</div>',
             unsafe_allow_html=True,
         )
 
         # ── Mühimmat (düzenlenebilir parametreler) ────────────────────────────
         st.markdown('<div class="section-header">Mühimmat</div>', unsafe_allow_html=True)
-        bullet_name = st.text_input("Mermi Adı",         key="ammo_input_name")
-        bullet_mass = st.number_input("Ağırlık (g)",      min_value=1.0,  step=0.1,   key="ammo_input_mass")
-        bullet_diam = st.number_input("Çap (mm)",         min_value=1.0,  step=0.1,   key="ammo_input_diam")
-        bullet_len  = st.number_input("Uzunluk (mm)",     min_value=0.1,  step=0.1,   key="ammo_input_len",
+        bullet_name = st.text_input("Mermi Adı", key="ammo_input_name",
+                                     help="Mühimmatın tanımlayıcı adı. Yalnızca kayıt ve dışa aktarma amaçlıdır.")
+        bullet_mass = st.number_input("Ağırlık (g)", min_value=1.0, step=0.1, key="ammo_input_mass",
+                                       help="Balistik hesaplamada kullanılan mermi çekirdeğinin ağırlığı (g). "
+                                            "Daha ağır mermiler rüzgardan daha az etkilenir ve düşüşe daha dayanıklıdır.")
+        bullet_diam = st.number_input("Çap (mm)", min_value=1.0, step=0.1, key="ammo_input_diam",
+                                       help="Merminin nominal çapı (mm). Hava direnci kesit alanı hesabında kullanılır: "
+                                            "A = π·(d/2)²")
+        bullet_len  = st.number_input("Uzunluk (mm)", min_value=0.1, step=0.1, key="ammo_input_len",
                                        help="Kayıt amaçlı — fizik hesabında kullanılmaz.")
-        muzzle_vel  = st.number_input("Namlu Hızı (m/s)", min_value=1.0,  step=1.0,   key="ammo_input_vel")
-        cd_val      = st.number_input("Cd (sabit)",       min_value=0.01, step=0.01,  key="ammo_input_cd",
+        muzzle_vel  = st.number_input("Namlu Hızı (m/s)", min_value=1.0, step=1.0, key="ammo_input_vel",
+                                       help="Merminin namludan çıktığı ilk hız V₀ (m/s). "
+                                            "Daha yüksek V₀ → daha kısa TOF, daha az yerçekimi düşüşü.")
+        cd_val      = st.number_input("Cd (sabit)", min_value=0.01, step=0.01, key="ammo_input_cd",
                                        format="%.3f",
-                                       help="Mach Dependent Cd kapalıyken bu değer kullanılır.")
+                                       help="Sabit hava direnci katsayısı. Mach Dependent Cd kapalıyken kullanılır. "
+                                            "Tipik aralık: 0.20 – 0.45. Düşük Cd → mermi hızını daha iyi korur.")
         use_mach_table = st.checkbox(
             "Mach Dependent Cd", value=False,
-            help="Açıksa MACH_TABLE/CD_TABLE ile np.interp. Kapalıysa sabit Cd.",
+            help="Açıksa Mach sayısına göre değişen Cd tablosu (MACH_TABLE/CD_TABLE) kullanılır. "
+                 "Transonic geçişlerde (Mach 0.8–1.2) Cd önemli ölçüde artar.",
         )
 
     # ── Koşullar ──────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Koşullar</div>', unsafe_allow_html=True)
-    distance = st.number_input("Mesafe (m)", value=1000.0, min_value=10.0, step=10.0)
+    distance = st.number_input("Mesafe (m)", value=1000.0, min_value=10.0, step=10.0,
+                               help="Atış noktasından hedefe olan doğrusal yatay mesafe (m).")
 
     if analysis_mode == "Tek Tilt":
         tilt_angle = st.number_input(
             "Tilt / Elevation (°)", value=2.0,
             min_value=-45.0, max_value=45.0, step=0.1,
+            help="Namlu ekseninin yataya göre yukarı kaldırılma açısı (°). "
+                 "Pozitif = yukarı, negatif = aşağı. Uzak hedefler için daha büyük tilt gerekir.",
         )
         comp_tilt         = tilt_angle
         comp_target_speed = 100.0
@@ -1281,8 +1320,12 @@ with st.sidebar:
         ))
         tilt_angle = comp_tilt
 
-    temperature = st.number_input("Sıcaklık (°C)", value=15.0,    min_value=-60.0, max_value=60.0, step=0.5)
-    pressure    = st.number_input("Basınç (hPa)",  value=1013.25, min_value=800.0, step=0.5)
+    temperature = st.number_input("Sıcaklık (°C)", value=15.0, min_value=-60.0, max_value=60.0, step=0.5,
+                                  help="Ortam hava sıcaklığı (°C). Hava yoğunluğunu ve ses hızını etkiler. "
+                                       "Sıcak hava → düşük yoğunluk → az hava direnci.")
+    pressure    = st.number_input("Basınç (hPa)", value=1013.25, min_value=800.0, step=0.5,
+                                  help="Atmosfer basıncı (hPa). Yüksek rakımda daha düşük olur. "
+                                       "Hava yoğunluğunu doğrudan etkiler: ρ = P / (R·T).")
 
     # ── Rüzgar ────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Rüzgar</div>', unsafe_allow_html=True)
@@ -1293,19 +1336,25 @@ with st.sidebar:
         '</div>',
         unsafe_allow_html=True,
     )
-    ht_spd = st.number_input("Head/Tail Wind (m/s)", value=0.0, min_value=0.0, step=0.1)
+    ht_spd = st.number_input("Head/Tail Wind (m/s)", value=0.0, min_value=0.0, step=0.1,
+                              help="Merminin hareket eksenine paralel rüzgar şiddeti (m/s). "
+                                   "Headwind (karşıdan) mermiyi yavaşlatır; Tailwind (arkadan) az da olsa hızlandırır.")
     ht_dir = st.radio(
         "Head/Tail Yön",
         ["Karşıdan — Headwind (−x)", "Arkadan — Tailwind (+x)"],
         index=0, key="ht_dir",
+        help="Headwind: mermi yönünün karşısından esen rüzgar. Tailwind: mermi yönünden esen rüzgar.",
     )
     wind_x = -ht_spd if ht_dir.startswith("Karşıdan") else +ht_spd
 
-    cw_spd = st.number_input("Crosswind (m/s)", value=0.0, min_value=0.0, step=0.1)
+    cw_spd = st.number_input("Crosswind (m/s)", value=0.0, min_value=0.0, step=0.1,
+                              help="Merminin hareket eksenine dik yanal rüzgar (m/s). "
+                                   "Z ekseninde sapma (Wind Drift) oluşturur.")
     cw_dir = st.radio(
         "Crosswind Yönü",
         ["+Z yönünde (sağ sapma)", "−Z yönünde (sol sapma)"],
         index=0, key="cw_dir",
+        help="+Z: mermiyi sağa sürükler. −Z: mermiyi sola sürükler.",
     )
     wind_z = +cw_spd if cw_dir.startswith("+Z") else -cw_spd
 
@@ -1318,15 +1367,31 @@ with st.sidebar:
         '</div>',
         unsafe_allow_html=True,
     )
-    do_pk = st.checkbox("Pk hesapla", value=False, key="do_pk")
+    do_pk = st.checkbox("Pk hesapla", value=False, key="do_pk",
+                        help="Monte Carlo Hit Probability (Pk) hesaplamalarını etkinleştirir. "
+                             "Açıkken hesaplama süresi artar.")
 
-    target_radius = st.number_input("Hedef yarıçapı (m)",            value=1.0,  min_value=0.1,  step=0.1,   format="%.2f")
-    burst_size    = st.number_input("Burst mermi sayısı",             value=25,   min_value=1,    step=1)
-    disp_mrad     = st.number_input("Dispersion sigma (mrad)",        value=1.5,  min_value=0.01, step=0.1,   format="%.2f")
-    track_err     = st.number_input("Tracking/Radar error sigma (m)", value=0.5,  min_value=0.0,  step=0.1,   format="%.2f")
-    lead_err_coef = st.number_input("Lead error coefficient",         value=0.02, min_value=0.0,  step=0.005, format="%.3f")
-    num_trials    = st.number_input("Monte Carlo deneme sayısı",      value=1000, min_value=10,   max_value=50000, step=100)
-    pk_seed       = st.number_input("Random Seed",                    value=42,   min_value=0,    step=1)
+    target_radius = st.number_input("Hedef yarıçapı (m)", value=1.0, min_value=0.1, step=0.1, format="%.2f",
+                                     help="Monte Carlo modelinde hedefin dairesel yarıçapı (m). "
+                                          "Mermi bu yarıçap içine düşerse isabet sayılır.")
+    burst_size    = st.number_input("Burst mermi sayısı", value=25, min_value=1, step=1,
+                                     help="Tek atış serisindeki mermi sayısı. "
+                                          "Burst içinden ≥1 mermi hedefe isabet ederse deneme başarılı sayılır.")
+    disp_mrad     = st.number_input("Dispersion sigma (mrad)", value=1.5, min_value=0.01, step=0.1, format="%.2f",
+                                     help="Silah/mühimmat kombinasyonunun doğal saçılımı (1-sigma, mrad). "
+                                          "Mesafeye bağlı sigma: σ_disp = mesafe × tan(disp_mrad / 1000)")
+    track_err     = st.number_input("Tracking/Radar error sigma (m)", value=0.5, min_value=0.0, step=0.1, format="%.2f",
+                                     help="Radar veya optik takip sisteminden kaynaklanan hedef konum hatası (1-sigma, m). "
+                                          "Etkin hata = track_err + |lead| × lead_error_coeff")
+    lead_err_coef = st.number_input("Lead error coefficient", value=0.02, min_value=0.0, step=0.005, format="%.3f",
+                                     help="Önleme hesaplamasındaki oransal hata katsayısı. "
+                                          "Lead arttıkça bu katsayı oransal hata ekler.")
+    num_trials    = st.number_input("Monte Carlo deneme sayısı", value=1000, min_value=10, max_value=50000, step=100,
+                                     help="Pk hesabında çalıştırılan simülasyon sayısı. "
+                                          "Daha fazla deneme → daha kararlı Pk tahmini. Önerilen: ≥ 1 000.")
+    pk_seed       = st.number_input("Random Seed", value=42, min_value=0, step=1,
+                                     help="Monte Carlo rastgelelik tohumu. Aynı seed → aynı sonuç. "
+                                          "Farklı seed ile sonuç değişkenliğini test edebilirsiniz.")
 
     st.markdown("")
     calc_btn = st.button("⚡ Hesapla")
@@ -1538,6 +1603,54 @@ BASE_FMT: dict = {
     "Total Sigma (m)":         "{:.3f}",
     "Target Radius (m)":       "{:.2f}",
 }
+
+# Kolon görüntü adları — yalnızca st.dataframe'de kullanılır, iç hesaplama etkilenmez
+_COL_DISPLAY: dict = {
+    "Hedef Hızı (km/h)":       "Target Speed (km/h)",
+    "TOF (s)":                 "TOF — Time of Flight (s)",
+    "Lead (m)":                "Lead Distance (m)",
+    "Drop (m)":                "Bullet Drop (m)",
+    "Wind Drift (m)":          "Wind Drift (m)",
+    "Impact Y (m)":            "Impact Y — Vertical Miss (m)",
+    "Vertical Error (m)":      "Vertical Error (m)",
+    "Required Elevation (°)":  "Required Elevation (°)",
+    "Girilen Tilt (°)":        "Entered Tilt (°)",
+    "Tilt (°)":                "Tilt Angle (°)",
+    "Dikey Hata (°)":          "Vertical Error (°)",
+    "Impact Velocity (m/s)":   "Impact Velocity at Target (m/s)",
+    "Impact Energy (J)":       "Impact Energy at Target (J)",
+    "Pk (%)":                  "Hit Probability — Pk (%)",
+    "Dispersion Sigma (m)":    "Dispersion Sigma (m)",
+    "Tracking Error Eff. (m)": "Effective Tracking Error (m)",
+    "Total Sigma (m)":         "Total Error Sigma (m)",
+    "Target Radius (m)":       "Target Radius (m)",
+    "Burst Size":              "Burst Size (rounds)",
+}
+
+
+def _display_df(df: pd.DataFrame, fmt: dict):
+    """Kolonları görüntü adlarıyla yeniden adlandırır ve formatlı Styler döner."""
+    col_map     = {k: v for k, v in _COL_DISPLAY.items() if k in df.columns}
+    display     = df.rename(columns=col_map)
+    display_fmt = {col_map.get(k, k): v for k, v in fmt.items()}
+    return display.style.format(display_fmt)
+
+
+_RESULTS_GUIDE = """
+| Kolon | Açıklama |
+|-------|----------|
+| **TOF — Time of Flight** | Merminin hedefe ulaşma süresi (s). Uzun TOF → büyük lead, fazla düşüş. |
+| **Lead Distance** | Hareket eden hedefe isabet için öne nişan alınması gereken mesafe. `Lead = hedef_hızı × TOF` |
+| **Bullet Drop** | Yerçekimi + tilt farkından kaynaklanan dikey sapma. Required Elevation ile sıfırlanabilir. |
+| **Wind Drift** | Crosswind nedeniyle Z ekseninde oluşan yanal sapma (m). |
+| **Required Elevation** | Tam isabet (Impact Y = 0) için hesaplanan gerçek namlu açısı (°). |
+| **Impact Y — Vertical Miss** | Girilen tilt açısıyla oluşan dikey isabet hatası. `Required Elev − Girilen Tilt` farkından kaynaklanır. |
+| **Impact Velocity at Target** | Hedefe ulaşan merminin hızı (m/s). Hava direnci ve yerçekimi nedeniyle V₀'dan düşük. |
+| **Impact Energy at Target** | Çarpma anındaki kinetik enerji: `E = ½·m·v²` (J). Hedef üzerindeki etki gücünü gösterir. |
+| **Impact Mach** | Çarpma anındaki Mach sayısı (`v / ses_hızı`). |
+| **Average Cd** | Uçuş boyunca hesaplanan ortalama drag katsayısı. |
+| **Hit Probability — Pk** | Monte Carlo simülasyonuyla hesaplanan vurma olasılığı (%). Burst içinden ≥1 isabet = başarı. |
+"""
 
 
 def _ammo_metric_cards():
@@ -1874,6 +1987,10 @@ if mode == "Tek Tilt":
     # ── Table ─────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Sonuç Tablosu (1–500 km/h)</div>',
                 unsafe_allow_html=True)
+
+    with st.expander("📖 Sonuçların Anlamı", expanded=False):
+        st.markdown(_RESULTS_GUIDE)
+
     search = st.text_input("Hız filtrele (km/h):", placeholder="örn. 100",
                            key="search_single")
     show_df = df.copy()
@@ -1885,7 +2002,7 @@ if mode == "Tek Tilt":
 
     fmt = {k: v for k, v in BASE_FMT.items() if k in show_df.columns}
     fmt["Girilen Tilt (°)"] = "{:.4f}"
-    st.dataframe(show_df.style.format(fmt), use_container_width=True, height=430)
+    st.dataframe(_display_df(show_df, fmt), use_container_width=True, height=430)
 
     _render_export_section(df, "Tek Tilt", "ballistic_single_tilt")
 
@@ -2061,6 +2178,10 @@ elif mode == "Tilt Aralığı":
     # ── Table ─────────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">Sonuç Tablosu</div>',
                 unsafe_allow_html=True)
+
+    with st.expander("📖 Sonuçların Anlamı", expanded=False):
+        st.markdown(_RESULTS_GUIDE)
+
     st.markdown(
         '<div class="info-box">'
         'Hız filtresi: belirli bir hedef hızındaki tüm tilt değerlerini gösterir.'
@@ -2078,7 +2199,7 @@ elif mode == "Tilt Aralığı":
 
     fmt = {k: v for k, v in BASE_FMT.items() if k in show_df.columns}
     fmt["Tilt (°)"] = "{:.4f}"
-    st.dataframe(show_df.style.format(fmt), use_container_width=True, height=430)
+    st.dataframe(_display_df(show_df, fmt), use_container_width=True, height=430)
 
     _render_export_section(df, "Tilt Aralığı", "ballistic_tilt_sweep")
 
@@ -2282,6 +2403,9 @@ elif mode == "Mühimmat Karşılaştırma":
     st.markdown('<div class="section-header">Karşılaştırma Tablosu</div>',
                 unsafe_allow_html=True)
 
+    with st.expander("📖 Sonuçların Anlamı", expanded=False):
+        st.markdown(_RESULTS_GUIDE)
+
     _cfmt = {
         "TOF (s)":                "{:.4f}",
         "Lead (m)":               "{:.3f}",
@@ -2304,7 +2428,7 @@ elif mode == "Mühimmat Karşılaştırma":
             "Total Sigma (m)":         "{:.3f}",
         })
     _cfmt_active = {k: v for k, v in _cfmt.items() if k in cdf.columns}
-    st.dataframe(cdf.style.format(_cfmt_active), use_container_width=True)
+    st.dataframe(_display_df(cdf, _cfmt_active), use_container_width=True)
 
     _render_export_section(cdf, "Mühimmat Karşılaştırma", "ammo_comparison")
 

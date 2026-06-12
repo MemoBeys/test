@@ -871,10 +871,12 @@ def make_3d_animation(
     n = len(t_arr)
 
     # ── Aspect ratio & camera based on scale mode ─────────────────────────────
+    _cam_default = dict(eye=dict(x=-2.0, y=0.8, z=0.5))   # Mermiyi Takip Et
+
     if scale_mode == "real":
         _aspect_mode = "data"
         _ar = dict(x=1.0, y=1.0, z=1.0)   # ignored by "data" mode
-        _init_cam = dict(eye=dict(x=1.6, y=1.2, z=0.8))
+        _init_cam = _cam_default
         _mode_note = (
             "Bu görünüm eksenleri fiziksel oranda gösterir; "
             "küçük Y/Z sapmaları zor görünebilir."
@@ -885,7 +887,7 @@ def make_3d_animation(
         _z_r = max(1.2, min(2.5, abs(lead_m) / max(distance_m, 1.0) * 8.0))
         _y_r = 1.2
         _ar = dict(x=_x_r, y=_y_r, z=_z_r)
-        _init_cam = dict(eye=dict(x=1.8, y=1.4, z=0.9))
+        _init_cam = _cam_default
         _mode_note = (
             "Bu görünüm okunabilirlik için Y/Z eksenlerini görsel olarak büyütür; "
             "fiziksel ölçüler eksen değerlerinde doğrudur."
@@ -1031,7 +1033,7 @@ def make_3d_animation(
         font=dict(color="#e6edf3", size=12),
         buttons=[
             dict(label="▶ Play", method="animate",
-                 args=[None, {"frame": {"duration": 30, "redraw": True},
+                 args=[None, {"frame": {"duration": 30, "redraw": False},
                               "fromcurrent": True, "transition": {"duration": 0}}]),
             dict(label="⏸ Pause", method="animate",
                  args=[[None], {"frame": {"duration": 0, "redraw": False},

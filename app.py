@@ -1140,6 +1140,23 @@ with _hcol_title:
     )
 st.divider()
 
+components.html("""<script>
+(function patch() {
+    var P = window.parent && window.parent.Plotly;
+    if (!P) { setTimeout(patch, 300); return; }
+    if (P._camPreserved) return;
+    P._camPreserved = true;
+    var orig = P.react.bind(P);
+    P.react = function(gd, data, layout, config) {
+        if (gd && gd._animating && layout && layout.scene) {
+            var c = gd._fullLayout && gd._fullLayout.scene && gd._fullLayout.scene.camera;
+            if (c) layout.scene.camera = JSON.parse(JSON.stringify(c));
+        }
+        return orig(gd, data, layout, config);
+    };
+})();
+</script>""", height=0)
+
 with st.expander("🚀 Hızlı Başlangıç — Uygulamayı İlk Kez Kullananlar İçin", expanded=False):
     st.markdown("""
 **Adım adım kullanım:**

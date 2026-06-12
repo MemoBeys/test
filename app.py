@@ -1570,14 +1570,17 @@ if calc_btn:
 
 if st.session_state.get("_collapse_sidebar"):
     st.session_state["_collapse_sidebar"] = False
+    _cc = st.session_state.get("_collapse_count", 0) + 1
+    st.session_state["_collapse_count"] = _cc
     components.html(
-        """<script>
-        setTimeout(function(){
+        f"""<script>
+        setTimeout(function(){{
             var btn = window.parent.document.querySelector(
                 '[data-testid="stSidebarCollapseButton"] button'
             );
             if (btn) btn.click();
-        }, 300);
+        }}, 300);
+        // run-{_cc}
         </script>""",
         height=0,
     )

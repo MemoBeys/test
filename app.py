@@ -4,6 +4,8 @@ Ballistic Lead Calculator
 """
 
 import base64
+from io import BytesIO
+from datetime import datetime
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -1539,6 +1541,217 @@ def _build_csv(base_df: pd.DataFrame) -> bytes:
     return export.to_csv(index=False).encode("utf-8")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  EXPORT HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _make_metadata(data_df: pd.DataFrame, mode_str: str) -> list:
+    """Return ordered [(label, value)] list for the current session's parameters."""
+    rows = [
+        ("Rapor Tarihi",   datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("Analiz Modu",    mode_str),
+    ]
+    if mode_str in ("Tek Tilt", "Tilt Aralığı"):
+        sp  = st.session_state.get("sim_params") or {}
+        ams = st.session_state.get("ammo_snapshot") or {}
+        tilt_val = sp.get("tilt_deg")
+        if tilt_val is None and data_df is not None and "Tilt (°)" in data_df.columns:
+            t_min = data_df["Tilt (°)"].min()
+            t_max = data_df["Tilt (°)"].max()
+            tilt_str = f"{t_min:.4f}° – {t_max:.4f}°"
+        elif tilt_val is not None:
+            tilt_str = f"{tilt_val:.4f}°"
+        else:
+            tilt_str = "—"
+        rows += [
+            ("Mühimmat",          ams.get("name",      "—")),
+            ("Tip",               ams.get("type",      "—")),
+            ("Mermi Ağırlığı",    f"{ams.get('mass_g',   '—')} g"),
+            ("Çap",               f"{ams.get('diam_mm',  '—')} mm"),
+            ("Namlu Hızı",        f"{ams.get('muzzle_ms','—')} m/s"),
+            ("Mesafe",            f"{sp.get('distance_m','—')} m"),
+            ("Tilt",              tilt_str),
+            ("Sıcaklık",          f"{sp.get('temp_c',        '—')} °C"),
+            ("Basınç",            f"{sp.get('pressure_hpa',  '—')} hPa"),
+            ("Head/Tail Wind",    f"{sp.get('wind_x', 0):.2f} m/s"),
+            ("Crosswind",         f"{sp.get('wind_z', 0):.2f} m/s"),
+            ("Mach Dependent Cd", str(sp.get("use_mach_table", False))),
+        ]
+    else:  # Mühimmat Karşılaştırma
+        cp  = st.session_state.get("compare_params") or {}
+        cdf = st.session_state.get("compare_df")
+        ammo_list = ", ".join(list(cdf["Mühimmat"])) if cdf is not None else "—"
+        rows += [
+            ("Mühimmatlar",       ammo_list),
+            ("Mesafe",            f"{cp.get('distance_m',       '—')} m"),
+            ("Tilt",              f"{cp.get('tilt_deg',          0):.4f}°"),
+            ("Hedef Hızı",        f"{cp.get('target_speed_kmh', '—')} km/h"),
+            ("Sıcaklık",          f"{cp.get('temp_c',           '—')} °C"),
+            ("Basınç",            f"{cp.get('pressure_hpa',     '—')} hPa"),
+            ("Head/Tail Wind",    f"{cp.get('wind_x', 0):.2f} m/s"),
+            ("Crosswind",         f"{cp.get('wind_z', 0):.2f} m/s"),
+            ("Mach Dependent Cd", str(cp.get("use_mach_table", False))),
+        ]
+    return rows
+
+
+def export_csv(data_df: pd.DataFrame, metadata: list) -> bytes:
+    """CSV with metadata comment lines prepended."""
+    lines = ["# Digitest Ballistic Lead Calculator Report"]
+    for k, v in metadata:
+        lines.append(f"# {k}: {v}")
+    lines.append("")
+    lines.append(data_df.to_csv(index=False))
+    return "\n".join(lines).encode("utf-8")
+
+
+def export_excel(data_df: pd.DataFrame, metadata: list) -> bytes:
+    """Excel workbook: Sheet1=Metadata, Sheet2=Results."""
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        meta_df = pd.DataFrame(metadata, columns=["Parameter", "Value"])
+        meta_df.to_excel(writer, sheet_name="Metadata", index=False)
+        data_df.to_excel(writer, sheet_name="Results", index=False)
+    return buf.getvalue()
+
+
+def export_txt(data_df: pd.DataFrame, metadata: list) -> bytes:
+    """Plain-text report: metadata header + full table."""
+    sep = "=" * 72
+    lines = ["Digitest Ballistic Lead Calculator Report", sep, ""]
+    for k, v in metadata:
+        lines.append(f"  {k:<28} {v}")
+    lines += ["", sep, "  RESULTS", sep, ""]
+    lines.append(data_df.to_string(index=False))
+    return "\n".join(lines).encode("utf-8")
+
+
+def export_pdf(data_df: pd.DataFrame, metadata: list) -> bytes:
+    """PDF report with metadata table + results table (first 100 rows)."""
+    from reportlab.lib.pagesizes import landscape, letter
+    from reportlab.lib import colors
+    from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
+                                    Paragraph, Spacer)
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(letter),
+        leftMargin=30, rightMargin=30, topMargin=36, bottomMargin=30,
+    )
+    styles   = getSampleStyleSheet()
+    story    = []
+    page_w   = landscape(letter)[0] - 60  # usable width in points
+
+    # ── Title ────────────────────────────────────────────────────────────────
+    story.append(Paragraph("Digitest Ballistic Lead Calculator Report",
+                            styles["Title"]))
+    story.append(Spacer(1, 10))
+
+    # ── Metadata table ────────────────────────────────────────────────────────
+    _hdr_style = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0), colors.HexColor("#1f6feb")),
+        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+        ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME",      (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1),
+         [colors.HexColor("#f0f4ff"), colors.white]),
+        ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#bbbbbb")),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ])
+    meta_rows = [["Parameter", "Value"]] + [[k, v] for k, v in metadata]
+    meta_tbl  = Table(meta_rows, colWidths=[190, page_w - 190])
+    meta_tbl.setStyle(_hdr_style)
+    story.append(meta_tbl)
+    story.append(Spacer(1, 14))
+
+    # ── Results table (max 100 rows) ──────────────────────────────────────────
+    truncated = len(data_df) > 100
+    pdf_df    = data_df.head(100)
+    n_cols    = len(pdf_df.columns)
+    col_w     = page_w / n_cols
+
+    result_rows = [list(pdf_df.columns)] + pdf_df.astype(str).values.tolist()
+    res_tbl = Table(result_rows,
+                    colWidths=[col_w] * n_cols,
+                    repeatRows=1)
+    res_tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0), colors.HexColor("#1f6feb")),
+        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+        ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME",      (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 6),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1),
+         [colors.HexColor("#f0f4ff"), colors.white]),
+        ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#bbbbbb")),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 3),
+        ("TOPPADDING",    (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+    ]))
+    story.append(Paragraph("Results", styles["Heading2"]))
+    story.append(Spacer(1, 4))
+    story.append(res_tbl)
+
+    if truncated:
+        story.append(Spacer(1, 8))
+        story.append(Paragraph(
+            f"Note: Table shows first 100 of {len(data_df):,} rows. "
+            "Full data is available in CSV/Excel export.",
+            styles["Italic"],
+        ))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+def _render_export_section(data_df: pd.DataFrame, mode_str: str,
+                            base_filename: str) -> None:
+    """Render the Export Seçenekleri section with 4 download buttons."""
+    st.divider()
+    st.markdown('<div class="section-header">Export Seçenekleri</div>',
+                unsafe_allow_html=True)
+    meta = _make_metadata(data_df, mode_str)
+    ex1, ex2, ex3, ex4 = st.columns(4)
+    with ex1:
+        st.download_button(
+            "⬇ CSV İndir",
+            data=export_csv(data_df, meta),
+            file_name=f"{base_filename}.csv",
+            mime="text/csv",
+            key=f"dl_csv_{base_filename}",
+        )
+    with ex2:
+        st.download_button(
+            "⬇ Excel İndir",
+            data=export_excel(data_df, meta),
+            file_name=f"{base_filename}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl_xlsx_{base_filename}",
+        )
+    with ex3:
+        st.download_button(
+            "⬇ TXT İndir",
+            data=export_txt(data_df, meta),
+            file_name=f"{base_filename}.txt",
+            mime="text/plain",
+            key=f"dl_txt_{base_filename}",
+        )
+    with ex4:
+        st.download_button(
+            "⬇ PDF İndir",
+            data=export_pdf(data_df, meta),
+            file_name=f"{base_filename}.pdf",
+            mime="application/pdf",
+            key=f"dl_pdf_{base_filename}",
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  TEK TILT MODE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1639,7 +1852,7 @@ if mode == "Tek Tilt":
     fmt["Girilen Tilt (°)"] = "{:.4f}"
     st.dataframe(show_df.style.format(fmt), use_container_width=True, height=430)
 
-    st.download_button("⬇ sonuc.csv İndir", _build_csv(df), "sonuc.csv", "text/csv")
+    _render_export_section(df, "Tek Tilt", "ballistic_single_tilt")
 
     # ── 3D Atış Simülasyonu ───────────────────────────────────────────────────
     st.divider()
@@ -1832,7 +2045,7 @@ elif mode == "Tilt Aralığı":
     fmt["Tilt (°)"] = "{:.4f}"
     st.dataframe(show_df.style.format(fmt), use_container_width=True, height=430)
 
-    st.download_button("⬇ sonuc.csv İndir", _build_csv(df), "sonuc.csv", "text/csv")
+    _render_export_section(df, "Tilt Aralığı", "ballistic_tilt_sweep")
 
     # ── 3D Atış Simülasyonu ───────────────────────────────────────────────────
     st.divider()
@@ -2058,8 +2271,7 @@ elif mode == "Mühimmat Karşılaştırma":
     _cfmt_active = {k: v for k, v in _cfmt.items() if k in cdf.columns}
     st.dataframe(cdf.style.format(_cfmt_active), use_container_width=True)
 
-    _ccsv = cdf.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇ ammo_compare.csv İndir", _ccsv, "ammo_compare.csv", "text/csv")
+    _render_export_section(cdf, "Mühimmat Karşılaştırma", "ammo_comparison")
 
     # ── 3D Atış Simülasyonu ───────────────────────────────────────────────────
     st.divider()

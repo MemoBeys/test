@@ -7,6 +7,7 @@ import base64
 from io import BytesIO
 from datetime import datetime
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -825,6 +826,7 @@ def make_3d_animation(
         ammo_name, speed_kmh, tilt_deg,
         entered_tilt_deg=None,
         scale_mode: str = "visual",
+        mobile_mode: bool = False,
 ) -> go.Figure:
     """
     Animated Plotly 3D figure.
@@ -976,12 +978,14 @@ def make_3d_animation(
     _cam_traj = dict(eye=dict(x=-2.0,  y=0.8,   z=0.5))   # behind shooter
 
     cam_menu = dict(
-        type="buttons", showactive=False,
-        direction="right",
+        type="dropdown" if mobile_mode else "buttons",
+        showactive=False,
+        direction="down" if mobile_mode else "right",
         x=0.0, xanchor="left",
-        y=1.08, yanchor="top",
+        y=1.06 if mobile_mode else 1.08,
+        yanchor="top",
         bgcolor="#161b22", bordercolor="#30363d",
-        font=dict(color="#e6edf3", size=11),
+        font=dict(color="#e6edf3", size=9 if mobile_mode else 11),
         buttons=[
             dict(label="İzometrik",        method="relayout",
                  args=[{"scene.camera": _cam_iso}]),
@@ -1000,7 +1004,7 @@ def make_3d_animation(
         type="buttons", showactive=False,
         y=0, x=0.5, xanchor="center",
         bgcolor="#161b22", bordercolor="#30363d",
-        font=dict(color="#e6edf3", size=12),
+        font=dict(color="#e6edf3", size=10 if mobile_mode else 12),
         buttons=[
             dict(label="▶ Play", method="animate",
                  args=[None, {"frame": {"duration": 30, "redraw": True},
@@ -1040,7 +1044,8 @@ def make_3d_animation(
             ),
             legend=dict(font=dict(color="#e6edf3"), bgcolor="#161b22",
                         bordercolor="#30363d"),
-            annotations=[dict(
+            showlegend=not mobile_mode,
+            annotations=[] if mobile_mode else [dict(
                 text=ann_text, align="left", showarrow=False,
                 xref="paper", yref="paper", x=0.01, y=0.98,
                 bgcolor="#161b22", bordercolor="#30363d", borderwidth=1,
@@ -1057,8 +1062,8 @@ def make_3d_animation(
                     label=str(i), method="animate",
                 ) for i, f in enumerate(frames)],
             )],
-            height=660,
-            margin=dict(l=0, r=0, t=80, b=80),
+            height=520 if mobile_mode else 660,
+            margin=dict(l=0, r=0, t=45, b=45) if mobile_mode else dict(l=0, r=0, t=80, b=80),
         ),
     )
     return fig
@@ -1085,9 +1090,12 @@ if "ammo_sel_prev" not in st.session_state:
 
 for _k in ("df", "mode", "mach_info", "ammo_snapshot", "sim_params",
            "sim3d_fig_single", "sim3d_fig_range",
-           "compare_df", "compare_params", "compare_3d_fig"):
+           "compare_df", "compare_params", "compare_3d_fig",
+           "sim3d_info_single", "sim3d_info_range", "comp3d_info"):
     if _k not in st.session_state:
         st.session_state[_k] = None
+if "_sidebar_collapse_flag" not in st.session_state:
+    st.session_state["_sidebar_collapse_flag"] = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1473,9 +1481,10 @@ if calc_btn:
             muzzle_vel_ms=float(muzzle_vel), cd_base=float(cd_val),
             use_mach_table=bool(use_mach_table),
         )
-        st.session_state["sim3d_fig_single"] = None
-        st.session_state["sim3d_fig_range"]  = None
-        st.session_state["compare_df"]       = None
+        st.session_state["sim3d_fig_single"]       = None
+        st.session_state["sim3d_fig_range"]        = None
+        st.session_state["compare_df"]             = None
+        st.session_state["_sidebar_collapse_flag"] = True
 
     elif analysis_mode == "Tilt Aralığı":
         _ammo_snap = {
@@ -1521,9 +1530,10 @@ if calc_btn:
                 muzzle_vel_ms=float(muzzle_vel), cd_base=float(cd_val),
                 use_mach_table=bool(use_mach_table),
             )
-            st.session_state["sim3d_fig_single"] = None
-            st.session_state["sim3d_fig_range"]  = None
-            st.session_state["compare_df"]       = None
+            st.session_state["sim3d_fig_single"]       = None
+            st.session_state["sim3d_fig_range"]        = None
+            st.session_state["compare_df"]             = None
+            st.session_state["_sidebar_collapse_flag"] = True
 
     else:  # Mühimmat Karşılaştırma
         if not comp_ammo_keys:
@@ -1554,10 +1564,11 @@ if calc_btn:
                 wind_z=float(wind_z),
                 use_mach_table=bool(use_mach_table),
             )
-            st.session_state["compare_3d_fig"]   = None
-            st.session_state["df"]               = None
-            st.session_state["sim3d_fig_single"] = None
-            st.session_state["sim3d_fig_range"]  = None
+            st.session_state["compare_3d_fig"]         = None
+            st.session_state["df"]                     = None
+            st.session_state["sim3d_fig_single"]       = None
+            st.session_state["sim3d_fig_range"]        = None
+            st.session_state["_sidebar_collapse_flag"] = True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1571,6 +1582,25 @@ _has_any_results = (
 if not _has_any_results:
     st.info("Sol panelden parametreleri girin ve **⚡ Hesapla** butonuna basın.")
     st.stop()
+
+# Auto-collapse sidebar on mobile after calculation
+if st.session_state.get("_sidebar_collapse_flag"):
+    st.session_state["_sidebar_collapse_flag"] = False
+    components.html(
+        """<script>
+        (function() {
+            try {
+                var w = window.parent.innerWidth || window.innerWidth;
+                if (w < 768) {
+                    var btn = window.parent.document.querySelector(
+                        '[data-testid="collapsedControl"]');
+                    if (btn) setTimeout(function(){ btn.click(); }, 400);
+                }
+            } catch(e) {}
+        })();
+        </script>""",
+        height=0,
+    )
 
 mode = st.session_state["mode"]
 
@@ -2032,6 +2062,10 @@ if mode == "Tek Tilt":
             index=0, horizontal=True, key="sim3d_scale_s",
         )
         _scale_mode_s = "visual" if _scale_lbl_s == "Görsel Ölçek" else "real"
+        _mobile_s = st.checkbox(
+            "📱 Mobil görünüm", value=False, key="sim3d_mobile_s",
+            help="Açıksa legend ve annotation kapalı, grafik 520 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
+        )
 
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_single"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
@@ -2084,11 +2118,20 @@ if mode == "Tek Tilt":
                     tilt_deg=_sim_tlt,
                     entered_tilt_deg=_ent_tlt,
                     scale_mode=_scale_mode_s,
+                    mobile_mode=_mobile_s,
                 )
                 st.session_state["sim3d_fig_single"] = _fig3d
+                st.session_state["sim3d_info_single"] = (
+                    f"TOF: {_traj['tof']:.4f} s  ·  Lead: {_lead_s:.3f} m  ·  "
+                    f"Vertical Miss: {_traj['impact_y']:.3f} m  ·  "
+                    f"Wind Drift: {_wdr:.3f} m  ·  "
+                    f"Required Elev: {_req_e:.4f}°  ·  Tilt: {_sim_tlt:.4f}°"
+                )
 
         _fig3d_s = st.session_state.get("sim3d_fig_single")
         if _fig3d_s is not None:
+            if _mobile_s and st.session_state.get("sim3d_info_single"):
+                st.info(st.session_state["sim3d_info_single"])
             st.plotly_chart(_fig3d_s, use_container_width=True)
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")
@@ -2237,6 +2280,10 @@ elif mode == "Tilt Aralığı":
             index=0, horizontal=True, key="sim3d_scale_r",
         )
         _scale_mode_r = "visual" if _scale_lbl_r == "Görsel Ölçek" else "real"
+        _mobile_r = st.checkbox(
+            "📱 Mobil görünüm", value=False, key="sim3d_mobile_r",
+            help="Açıksa legend ve annotation kapalı, grafik 520 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
+        )
 
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_range"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
@@ -2296,11 +2343,20 @@ elif mode == "Tilt Aralığı":
                     tilt_deg=_sim_tlt,
                     entered_tilt_deg=_ent_tlt,
                     scale_mode=_scale_mode_r,
+                    mobile_mode=_mobile_r,
                 )
                 st.session_state["sim3d_fig_range"] = _fig3d
+                st.session_state["sim3d_info_range"] = (
+                    f"TOF: {_traj['tof']:.4f} s  ·  Lead: {_lead_r:.3f} m  ·  "
+                    f"Vertical Miss: {_traj['impact_y']:.3f} m  ·  "
+                    f"Wind Drift: {_wdr:.3f} m  ·  "
+                    f"Required Elev: {_req_e:.4f}°  ·  Tilt: {_sim_tlt:.4f}°"
+                )
 
         _fig3d_r = st.session_state.get("sim3d_fig_range")
         if _fig3d_r is not None:
+            if _mobile_r and st.session_state.get("sim3d_info_range"):
+                st.info(st.session_state["sim3d_info_range"])
             st.plotly_chart(_fig3d_r, use_container_width=True)
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")
@@ -2456,6 +2512,10 @@ elif mode == "Mühimmat Karşılaştırma":
             index=0, horizontal=True, key="comp3d_scale",
         )
         _scale_mode_c = "visual" if _scale_lbl_c == "Görsel Ölçek" else "real"
+        _mobile_c = st.checkbox(
+            "📱 Mobil görünüm", value=False, key="comp3d_mobile",
+            help="Açıksa legend ve annotation kapalı, grafik 520 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
+        )
 
         if st.button("🎯 3D Animasyon Oluştur", key="comp3d_btn"):
             with st.spinner("3D simülasyon hesaplanıyor…"):
@@ -2510,11 +2570,20 @@ elif mode == "Mühimmat Karşılaştırma":
                     tilt_deg=_sim_tlt,
                     entered_tilt_deg=_ent_tlt,
                     scale_mode=_scale_mode_c,
+                    mobile_mode=_mobile_c,
                 )
                 st.session_state["compare_3d_fig"] = _fig3d_c
+                st.session_state["comp3d_info"] = (
+                    f"TOF: {_ctraj['tof']:.4f} s  ·  Lead: {_lead_c:.3f} m  ·  "
+                    f"Vertical Miss: {_ctraj['impact_y']:.3f} m  ·  "
+                    f"Wind Drift: {_wdr:.3f} m  ·  "
+                    f"Required Elev: {_req_e:.4f}°  ·  Tilt: {_sim_tlt:.4f}°"
+                )
 
         _fig3d_c = st.session_state.get("compare_3d_fig")
         if _fig3d_c is not None:
+            if _mobile_c and st.session_state.get("comp3d_info"):
+                st.info(st.session_state["comp3d_info"])
             st.plotly_chart(_fig3d_c, use_container_width=True)
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")

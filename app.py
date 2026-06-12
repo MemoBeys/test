@@ -1033,7 +1033,7 @@ def make_3d_animation(
         font=dict(color="#e6edf3", size=12),
         buttons=[
             dict(label="▶ Play", method="animate",
-                 args=[None, {"frame": {"duration": 30, "redraw": False},
+                 args=[None, {"frame": {"duration": 30, "redraw": True},
                               "fromcurrent": True, "transition": {"duration": 0}}]),
             dict(label="⏸ Pause", method="animate",
                  args=[[None], {"frame": {"duration": 0, "redraw": False},
@@ -1060,7 +1060,8 @@ def make_3d_animation(
                 bgcolor="#0d1117",
                 aspectmode=_aspect_mode,
                 aspectratio=_ar,
-                camera=_init_cam,   # initial view only — uirevision preserves after that
+                camera=_init_cam,
+                uirevision="keep-camera",
                 xaxis=dict(title="X — Downrange (m)", color="#8b949e",
                            gridcolor="#30363d", zerolinecolor="#30363d"),
                 yaxis=dict(title="Z — Lateral (m)",   color="#8b949e",

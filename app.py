@@ -1024,8 +1024,10 @@ def make_3d_animation(
             # the camera state is preserved when animation frames are applied.
             uirevision="keep-camera",
             title=dict(
-                text=(f"3D Atış Simülasyonu — {ammo_name} — {speed_kmh} km/h "
-                      f"— Tilt {entered_tilt_deg:.2f}°"),
+                text="" if mobile_mode else (
+                    f"3D Atış Simülasyonu — {ammo_name} — {speed_kmh} km/h "
+                    f"— Tilt {entered_tilt_deg:.2f}°"
+                ),
                 font=dict(color="#58a6ff", size=14),
             ),
             paper_bgcolor="#0d1117",
@@ -1051,7 +1053,7 @@ def make_3d_animation(
                 bgcolor="#161b22", bordercolor="#30363d", borderwidth=1,
                 font=dict(color="#8b949e", size=11),
             )],
-            updatemenus=[cam_menu, play_menu],
+            updatemenus=[play_menu] if mobile_mode else [cam_menu, play_menu],
             sliders=[dict(
                 active=0,
                 currentvalue={"prefix": "Frame: "},
@@ -1062,7 +1064,7 @@ def make_3d_animation(
                     label=str(i), method="animate",
                 ) for i, f in enumerate(frames)],
             )],
-            height=520 if mobile_mode else 660,
+            height=450 if mobile_mode else 660,
             margin=dict(l=0, r=0, t=45, b=45) if mobile_mode else dict(l=0, r=0, t=80, b=80),
         ),
     )
@@ -1583,24 +1585,38 @@ if not _has_any_results:
     st.info("Sol panelden parametreleri girin ve **⚡ Hesapla** butonuna basın.")
     st.stop()
 
-# Auto-collapse sidebar on mobile after calculation
+st.markdown('<div id="results"></div>', unsafe_allow_html=True)
+
+# Auto-collapse sidebar on mobile + scroll to results after calculation
 if st.session_state.get("_sidebar_collapse_flag"):
-    st.session_state["_sidebar_collapse_flag"] = False
     components.html(
         """<script>
         (function() {
             try {
+                var doc = window.parent.document;
                 var w = window.parent.innerWidth || window.innerWidth;
-                if (w < 768) {
-                    var btn = window.parent.document.querySelector(
-                        '[data-testid="collapsedControl"]');
-                    if (btn) setTimeout(function(){ btn.click(); }, 400);
+                // Sidebar collapse — try multiple selectors for reliability
+                var buttons = Array.from(doc.querySelectorAll('button'));
+                var collapseBtn = buttons.find(function(btn) {
+                    var label = btn.getAttribute('aria-label') || '';
+                    return label.toLowerCase().includes('close sidebar') ||
+                           label.toLowerCase().includes('collapse sidebar') ||
+                           btn.innerText.includes('×');
+                });
+                if (w < 900 && collapseBtn) {
+                    setTimeout(function() { collapseBtn.click(); }, 400);
                 }
+                // Scroll to results anchor
+                setTimeout(function() {
+                    var el = doc.getElementById('results');
+                    if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+                }, 300);
             } catch(e) {}
         })();
         </script>""",
         height=0,
     )
+    st.session_state["_sidebar_collapse_flag"] = False
 
 mode = st.session_state["mode"]
 
@@ -2063,8 +2079,8 @@ if mode == "Tek Tilt":
         )
         _scale_mode_s = "visual" if _scale_lbl_s == "Görsel Ölçek" else "real"
         _mobile_s = st.checkbox(
-            "📱 Mobil görünüm", value=False, key="sim3d_mobile_s",
-            help="Açıksa legend ve annotation kapalı, grafik 520 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
+            "📱 Mobil görünüm", value=True, key="sim3d_mobile_s",
+            help="Açıksa legend ve kamera menüsü kapalı, grafik 450 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
         )
 
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_single"):
@@ -2131,8 +2147,11 @@ if mode == "Tek Tilt":
         _fig3d_s = st.session_state.get("sim3d_fig_single")
         if _fig3d_s is not None:
             if _mobile_s and st.session_state.get("sim3d_info_single"):
-                st.info(st.session_state["sim3d_info_single"])
-            st.plotly_chart(_fig3d_s, use_container_width=True)
+                st.caption(st.session_state["sim3d_info_single"])
+            st.plotly_chart(
+                _fig3d_s, use_container_width=True,
+                config={"displayModeBar": not _mobile_s, "responsive": True, "scrollZoom": True},
+            )
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")
 
@@ -2281,8 +2300,8 @@ elif mode == "Tilt Aralığı":
         )
         _scale_mode_r = "visual" if _scale_lbl_r == "Görsel Ölçek" else "real"
         _mobile_r = st.checkbox(
-            "📱 Mobil görünüm", value=False, key="sim3d_mobile_r",
-            help="Açıksa legend ve annotation kapalı, grafik 520 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
+            "📱 Mobil görünüm", value=True, key="sim3d_mobile_r",
+            help="Açıksa legend ve kamera menüsü kapalı, grafik 450 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
         )
 
         if st.button("🎯 3D Animasyon Oluştur", key="sim3d_btn_range"):
@@ -2356,8 +2375,11 @@ elif mode == "Tilt Aralığı":
         _fig3d_r = st.session_state.get("sim3d_fig_range")
         if _fig3d_r is not None:
             if _mobile_r and st.session_state.get("sim3d_info_range"):
-                st.info(st.session_state["sim3d_info_range"])
-            st.plotly_chart(_fig3d_r, use_container_width=True)
+                st.caption(st.session_state["sim3d_info_range"])
+            st.plotly_chart(
+                _fig3d_r, use_container_width=True,
+                config={"displayModeBar": not _mobile_r, "responsive": True, "scrollZoom": True},
+            )
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")
 
@@ -2513,8 +2535,8 @@ elif mode == "Mühimmat Karşılaştırma":
         )
         _scale_mode_c = "visual" if _scale_lbl_c == "Görsel Ölçek" else "real"
         _mobile_c = st.checkbox(
-            "📱 Mobil görünüm", value=False, key="comp3d_mobile",
-            help="Açıksa legend ve annotation kapalı, grafik 520 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
+            "📱 Mobil görünüm", value=True, key="comp3d_mobile",
+            help="Açıksa legend ve kamera menüsü kapalı, grafik 450 px yüksekliğinde. Değişiklik için yeniden oluşturun.",
         )
 
         if st.button("🎯 3D Animasyon Oluştur", key="comp3d_btn"):
@@ -2583,7 +2605,10 @@ elif mode == "Mühimmat Karşılaştırma":
         _fig3d_c = st.session_state.get("compare_3d_fig")
         if _fig3d_c is not None:
             if _mobile_c and st.session_state.get("comp3d_info"):
-                st.info(st.session_state["comp3d_info"])
-            st.plotly_chart(_fig3d_c, use_container_width=True)
+                st.caption(st.session_state["comp3d_info"])
+            st.plotly_chart(
+                _fig3d_c, use_container_width=True,
+                config={"displayModeBar": not _mobile_c, "responsive": True, "scrollZoom": True},
+            )
     else:
         st.info("Önce ⚡ Hesapla butonuna basın.")
